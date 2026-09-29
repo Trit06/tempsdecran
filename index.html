@@ -1,0 +1,2240 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#17191e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Temps d'écran</title>
+<style>
+  :root{
+    --bg:#17191e; --txt:#8b9099;
+    --ok:#16a34a; --warn:#ea580c; --low:#dc2626; --over:#7f1d1d;
+    --c-jour:#86efac; --c-bonus:#fbbf24; --c-dev:#60a5fa; --c-cum:#166534;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--txt);
+    overflow:hidden; user-select:none; -webkit-user-select:none;
+  }
+
+  /* ---- Scène : un ou deux couloirs verticaux ---- */
+  .stage{height:100%;display:flex}
+  .lane{
+    flex:1 1 0; min-width:0; position:relative; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center;
+    background:#1d2026; color:var(--txt);
+    transition:background-color .6s ease, color .6s ease;
+    padding:calc(env(safe-area-inset-top) + 8px) 12px calc(env(safe-area-inset-bottom) + 12px);
+    gap:2px;
+  }
+  .lane + .lane{border-left:2px solid rgba(0,0,0,.45)}
+  body.solo0 .lane[data-k="1"]{display:none}
+  body.solo1 .lane[data-k="0"]{display:none}
+
+  .lane.running{color:#fff}
+  .lane.running.lvl-ok{background:var(--ok)}
+  .lane.running.lvl-warn{background:var(--warn)}
+  .lane.running.lvl-low{background:var(--low)}
+  .lane.running.lvl-over{background:var(--over)}
+  .lane::after{content:"";position:absolute;inset:0;pointer-events:none;background:#fff;opacity:0}
+  .lane.running::after{animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:0}50%{opacity:.16}}
+
+  /* À zéro, chrono en marche : jauge vide et fond qui clignote en rouge */
+  .lane.running.lvl-over{animation:clignote 1s steps(1,end) infinite}
+  .lane.running.lvl-over::after{animation:none;opacity:0}
+  .lane.running.lvl-over .gauge{opacity:.22}
+  @keyframes clignote{
+    0%,49%  {background-color:#5f1111}
+    50%,100%{background-color:#e11d48}
+  }
+  /* À zéro, chrono arrêté : fond gris habituel et « FINI » au milieu de la jauge */
+  .fini{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);z-index:3;
+    text-align:center;pointer-events:none;display:none;
+    font-weight:900;letter-spacing:.06em;color:#ef4444;line-height:1;
+    font-size:max(26px, min(15vw, 13vh));   /* déborde volontairement de la jauge */
+    text-shadow:0 2px 12px rgba(0,0,0,.65)}
+  .lane.termine .fini{display:block}
+  .lane > *{position:relative;z-index:1}
+
+  /* Recharge « batterie » : bandes horizontales qui montent pendant les devoirs */
+  .lane .charge{
+    position:absolute; inset:0; z-index:0; pointer-events:none; opacity:0;
+    transition:opacity .45s;
+    background:repeating-linear-gradient(to top,
+      rgba(96,165,250,0)    0px,
+      rgba(96,165,250,.55) 44px,
+      rgba(191,219,254,.75) 68px,
+      rgba(96,165,250,.55) 92px,
+      rgba(96,165,250,0)  136px);
+    background-size:100% 272px;
+    box-shadow:inset 0 0 0 4px rgba(96,165,250,.55);
+  }
+  .lane.charging .charge{opacity:1; animation:charge 1.5s linear infinite}
+  @keyframes charge{from{background-position:0 0} to{background-position:0 -272px}}
+
+  /* Prénom aussi grand que le chrono, borné par la hauteur autant que par la largeur */
+  .nm{font-weight:800;line-height:1;opacity:.95;
+      font-size:max(24px, min(11vw, 6.2vh));
+      width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .time{font-variant-numeric:tabular-nums;font-weight:800;line-height:1;
+        font-size:max(24px, min(11vw, 6.2vh));white-space:nowrap}
+  body:not(.two) .nm, body:not(.two) .time{font-size:max(32px, min(19vw, 9.5vh))}
+  .sec{font-size:.667em;opacity:.8}          /* secondes réduites d'un tiers */
+  .lane:not(.running) .time{opacity:.55}
+  /* total disponible sur la journée : filet fin, moitié de la taille du chrono, 50 % */
+  .tot{display:flex;flex-direction:column;align-items:center;gap:1px;opacity:.5;
+       width:100%;margin-top:-3px}
+  .tbar{width:min(140px,38%);height:2px;background:currentColor;border-radius:2px}
+  .tot b{font-weight:800;line-height:1;font-variant-numeric:tabular-nums;
+         font-size:max(12px, min(5.5vw, 3.1vh))}
+  body:not(.two) .tot b{font-size:max(16px, min(9.5vw, 4.75vh))}
+  /* le prénom centré ne doit passer ni sous l'engrenage ni sous la pastille de
+     synchro : on le retire du bord, il se réduit tout seul s'il ne tient plus */
+  body.two .lane[data-k="0"] .nm, body.solo0 .lane[data-k="0"] .nm,
+  body.solo1 .lane[data-k="1"] .nm{padding-left:50px}
+  body.two .lane[data-k="1"] .nm, body.solo0 .lane[data-k="0"] .nm,
+  body.solo1 .lane[data-k="1"] .nm{padding-right:34px}
+  .stt{font-weight:900;letter-spacing:.1em;display:flex;align-items:center;gap:.35em;
+       font-size:max(10px, min(2.3vw, 1.9vh));line-height:1}
+
+  .gwrap{flex:1 1 auto;min-height:56px;width:100%;position:relative;
+         display:flex;justify-content:center;align-items:stretch}
+  .ovl{position:absolute;top:4px;left:0;right:0;text-align:center;pointer-events:none;
+       font-weight:900;letter-spacing:.08em;font-size:max(11px, min(2.6vw, 2.1vh));visibility:hidden}
+  .lane.over .ovl{visibility:visible}
+  .gauge{
+    position:relative;
+    height:100%; width:clamp(52px,12vw,130px);
+    border-radius:999px; overflow:hidden;
+    /* fond sombre plutôt que translucide : la part consommée tranche sur n'importe
+       quelle couleur de couloir, et le contour clair garde la jauge lisible à l'arrêt */
+    background:#0e1116;
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.38);
+    display:flex; flex-direction:column-reverse;   /* se remplit par le bas */
+    transition:opacity .5s;
+  }
+  .lane:not(.running) .gauge{opacity:.78}
+  .gseg{width:100%;transition:height .4s linear}
+  .gseg.jour{background:var(--c-jour)}
+  .gseg.bonus{background:var(--c-bonus)}
+  .gseg.dev{background:var(--c-dev)}
+  .gseg.cum{background:var(--c-cum)}
+  /* Dette : calque translucide au BAS de la jauge. Quand les bandes descendent
+     jusqu'à son bord supérieur, il ne reste plus rien : c'est la ligne du zéro. */
+  .gseg.debt{position:absolute;left:0;right:0;bottom:0;z-index:2;pointer-events:none;
+    background:repeating-linear-gradient(45deg,
+      rgba(220,38,38,.5) 0 7px, rgba(127,29,29,.5) 7px 14px);
+    border-top:2px solid rgba(255,255,255,.8)}
+  .gseg.debt[style*="height: 0%"]{border-top:0}
+
+  .lgt{flex:0 0 100%;justify-content:center;font-size:max(9px, min(1.7vw, 1.5vh));
+       font-weight:700;letter-spacing:.09em;opacity:.55;line-height:1.05}
+  /* Repères horaires : un trait par heure, à cheval sur le bord droit de la jauge */
+  .ticks{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);
+    width:clamp(52px,12vw,130px);pointer-events:none;z-index:2}
+  .ticks i, .ticks b{position:absolute;display:block;border-radius:1px;height:1.5px;
+    right:-14%;filter:drop-shadow(0 1px 1px rgba(0,0,0,.45))}
+  .ticks i{width:32%;background:linear-gradient(90deg,
+      rgba(255,255,255,0) 0%, rgba(255,255,255,.22) 30%,
+      rgba(255,255,255,.62) 66%, rgba(255,255,255,.78) 100%)}
+  .ticks b{width:16%;background:linear-gradient(90deg,
+      rgba(255,255,255,0) 0%, rgba(255,255,255,.40) 100%)}
+  .ticks u{position:absolute;left:122%;transform:translateY(50%);text-decoration:none;
+    font-size:max(9px, min(1.5vw, 1.35vh));font-weight:700;opacity:.45;
+    font-variant-numeric:tabular-nums;white-space:nowrap;
+    text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  body.noticks .ticks{display:none}
+
+  .lg{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:0 12px;
+      font-size:max(10px, min(1.9vw, 1.7vh));font-weight:600;font-variant-numeric:tabular-nums;
+      line-height:1.15;max-width:100%}
+  .lg span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  .lg b.neg{color:#fca5a5}
+  .lg b.gele{opacity:.55;font-style:italic}   /* cumulé mis de côté ce jour-là */          /* réserve négative : un malus, pas du temps joué */
+  .dot{width:.72em;height:.72em;border-radius:50%;flex:0 0 auto}
+  .dot.jour{background:var(--c-jour)} .dot.bonus{background:var(--c-bonus)}
+  .dot.dev{background:var(--c-dev)}   .dot.cum{background:var(--c-cum)}
+
+  .brow{display:flex;gap:8px;width:100%;max-width:470px;align-items:stretch;flex:0 0 auto}
+  .go{
+    flex:1 1 auto; min-width:150px; height:max(48px, min(7.5vh, 82px));
+    border:0; border-radius:999px; cursor:pointer;
+    font-size:max(14px, min(2.3vw, 2.6vh)); font-weight:900; letter-spacing:.03em;
+    background:var(--ok); color:#fff; box-shadow:0 6px 24px rgba(0,0,0,.35);
+    transition:transform .1s;
+  }
+  .go:active{transform:scale(.97)}
+  .lane.running .go{background:#fff;color:#111}
+  .go:disabled, .hwb:disabled{opacity:.3;cursor:default;box-shadow:none}
+  .go:disabled:active, .hwb:disabled:active{transform:none}
+  .hwb{
+    flex:0 1 auto; width:max(80px, min(12vw, 112px)); padding:0 6px;
+    border:0; border-radius:999px; cursor:pointer;
+    background:#1e3a5f; color:#bfdbfe; font-weight:900; letter-spacing:.02em;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    line-height:1.15; white-space:normal;
+    font-size:max(10px, min(1.8vw, 1.6vh)); box-shadow:0 6px 24px rgba(0,0,0,.35);
+    transition:transform .1s;
+  }
+  .hwb:active{transform:scale(.96)}
+  .hwb.on{background:var(--c-dev);color:#08203c;animation:devpulse 1.4s ease-in-out infinite}
+  @keyframes devpulse{50%{filter:brightness(1.22)}}
+  .oub{
+    flex:0 1 auto; width:max(72px, min(10vw, 96px)); padding:0 6px;
+    border:0; border-radius:999px; cursor:pointer;
+    background:#3b414d; color:#cbd5e1; font-weight:900; letter-spacing:.02em;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    line-height:1.15; white-space:normal;
+    font-size:max(10px, min(1.7vw, 1.5vh)); box-shadow:0 6px 24px rgba(0,0,0,.35);
+    transition:transform .1s;
+  }
+  .oub:active{transform:scale(.96)}
+  /* Dégage le coin bas-droit pour le bouton de fermeture du launcher */
+  body.two .lane[data-k="1"] .brow, body.solo0 .lane[data-k="0"] .brow,
+  body.solo1 .lane[data-k="1"] .brow{
+    width:auto; align-self:stretch; margin-right:86px;
+  }
+
+  /* ---- Couloir étroit (téléphone à deux enfants) : les boutons s'empilent ---- */
+  body.narrow .brow{flex-wrap:wrap; gap:6px; max-width:none}
+  body.narrow .go{flex:1 1 100%; width:auto; height:max(44px, min(6.2vh, 62px));
+                  font-size:max(13px, min(4.6vw, 2.2vh)); letter-spacing:.02em}
+  body.narrow .hwb, body.narrow .oub{flex:1 1 0; width:auto; min-height:34px; padding:5px 4px;
+                   font-size:max(10px, min(2.9vw, 1.5vh)); letter-spacing:0}
+  /* en étroit on dégage le launcher par le bas, pas par le côté :
+     la marge latérale ne laissait plus aucune place au bouton principal */
+  body.narrow .lane[data-k="1"] .brow, body.narrow .lane[data-k="0"] .brow{
+    width:100%; align-self:center; margin-right:0;
+  }
+  body.narrow .lane{padding-bottom:calc(env(safe-area-inset-bottom) + 78px)}
+  body.narrow .lg{font-size:max(9px, min(2.7vw, 1.5vh)); gap:0 8px}
+
+
+  /* ---- Barre flottante ---- */
+  .gear{
+    position:fixed; z-index:5; left:calc(env(safe-area-inset-left) + 10px); top:calc(env(safe-area-inset-top) + 10px);
+    width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.35);
+    color:#e8eaee;font-size:22px;cursor:pointer;
+  }
+  .ver{position:fixed; z-index:6; top:calc(env(safe-area-inset-top) + 2px); left:0; right:0;
+    text-align:center; font-size:9px; letter-spacing:.06em; color:#fff; opacity:.15;
+    pointer-events:none; font-variant-numeric:tabular-nums}
+  .net{position:fixed; z-index:5; right:calc(env(safe-area-inset-right) + 16px); top:calc(env(safe-area-inset-top) + 24px)}
+  .net i{width:14px;height:14px;border-radius:50%;background:#555;display:block;transition:background-color .3s}
+  .net.live i{background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.25)}
+  .net.wait i{background:#eab308;animation:blink 1s infinite}
+  .net.down i{background:#ef4444}
+  /* point de synchro (v3.8), juste sous le point de connexion */
+  .syn{position:fixed; z-index:5; right:calc(env(safe-area-inset-right) + 16px); top:calc(env(safe-area-inset-top) + 46px)}
+  .net, .syn{padding:6px; margin:-6px; cursor:pointer}
+  .syn i{width:14px;height:14px;border-radius:50%;display:block;box-sizing:border-box;
+    border:3px solid #555;transition:border-color .3s, background-color .3s}
+  .syn.ok i{border-color:#22c55e;background:#22c55e33}
+  .syn.envoi i{border-color:#eab308;animation:blink 1s infinite}
+  .syn.ecart i{border-color:#ef4444;background:#ef444433}
+  .bulle{position:fixed; z-index:7; right:calc(env(safe-area-inset-right) + 40px); top:calc(env(safe-area-inset-top) + 20px);
+    max-width:260px; background:#2a2e36; color:#e8eaee; border:1px solid #3f444e; border-radius:12px;
+    padding:10px 12px; font-size:13px; line-height:1.35; box-shadow:0 6px 20px rgba(0,0,0,.45);
+    opacity:0; pointer-events:none; transition:opacity .2s}
+  .bulle.vis{opacity:1}
+  .bulle{white-space:pre-line}
+  @keyframes blink{50%{opacity:.25}}
+
+  /* ---- Modales ---- */
+  .modal{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.72);display:none;
+    align-items:center;justify-content:center;padding:16px}
+  .modal.open{display:flex}
+  .card{background:#23262d;color:#e8eaee;border-radius:20px;width:100%;max-width:480px;
+    max-height:calc(100% - 20px);overflow:auto;padding:20px}
+  .card h2{font-size:20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+  .x{background:none;border:0;color:#aaa;font-size:28px;cursor:pointer;line-height:1}
+  .dots{display:flex;gap:14px;justify-content:center;margin:10px 0 18px}
+  .dots i{width:18px;height:18px;border-radius:50%;border:2px solid #888;display:block}
+  .dots i.f{background:#e8eaee;border-color:#e8eaee}
+  .pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .pad button{height:64px;border-radius:14px;border:0;background:#33373f;color:#fff;font-size:26px;cursor:pointer}
+  .pad button:active{background:#454a54}
+  .err{color:#f87171;text-align:center;min-height:20px;margin-top:10px}
+  .sec2{margin-top:18px}
+  .sec2 h3{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#9aa0aa;margin-bottom:10px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .stack{display:flex;flex-direction:column;gap:8px}
+  .btn{border:0;border-radius:12px;padding:12px 14px;font-size:16px;font-weight:700;cursor:pointer;background:#33373f;color:#fff}
+  .btn.plus{background:#166534} .btn.minus{background:#7f1d1d} .btn.danger{background:#7f1d1d;width:100%}
+  .btn.on{background:#166534}
+  .btn:disabled{opacity:.38;cursor:default}
+  .preset{flex:1 1 0;min-width:70px;transition:transform .08s, background-color .15s, box-shadow .15s}
+  .preset.sel{background:#16a34a;transform:translateY(3px);
+    box-shadow:inset 0 4px 10px rgba(0,0,0,.5), 0 0 0 2px rgba(34,197,94,.45)}
+  .sign{flex:0 0 62px;font-size:24px;background:#166534}
+  .sign.neg{background:#7f1d1d}
+  input{background:#16181d;border:1px solid #3a3f48;color:#fff;border-radius:10px;padding:10px;font-size:16px;min-width:0;width:100%}
+  /* sélecteur d'affichage : volontairement différent des onglets enfants,
+     pour qu'on ne croie pas qu'il commande les réglages du dessous */
+  .vsel{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px}
+  .vsel button{border:1px solid #3f444e;background:transparent;color:#9aa0aa;
+    border-radius:999px;padding:7px 15px;font-size:14px;font-weight:700;cursor:pointer}
+  .vsel button.sel{background:#e8eaee;color:#16181d;border-color:#e8eaee}
+  /* bloc encadré : tout ce qu'il contient dépend de l'enfant choisi en haut du bloc */
+  .scoped{border:1px solid #363b45;border-radius:14px;padding:14px;margin-top:8px;background:#1e2127}
+  .tabs{display:flex;gap:8px;margin-bottom:4px}
+  .tabs button{flex:1;border:0;border-radius:12px;padding:12px;font-size:16px;font-weight:800;
+    background:#33373f;color:#9aa0aa;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tabs button.sel{background:#2f6fd0;color:#fff}
+  .q{display:grid;grid-template-columns:1fr 84px 62px 42px;gap:7px;align-items:center;margin-bottom:6px}
+  .q.nolock{grid-template-columns:1fr 84px 62px}
+  .lock{border:0;border-radius:10px;padding:9px 0;background:#33373f;color:#767c87;
+        font-size:15px;cursor:pointer;line-height:1}
+  .lock.on{background:#7f1d1d;color:#fff}
+  .q small{color:#9aa0aa;text-align:right}
+  .log{font-size:14px;color:#c4c8cf;line-height:1.6}
+  .log .lr{position:relative;overflow:hidden;border-radius:4px;margin-bottom:2px;background:#7f1d1d}
+  .log .lr.back{background:#166534}
+  .log .lr.live{background:transparent}
+  .log .edit{position:absolute;top:0;right:72px;bottom:0;width:72px;border:0;background:#2f6fd0;
+    color:#fff;font-size:20px;cursor:pointer}
+  .log .mod{font-style:normal;color:var(--c-bonus);margin-left:6px;font-size:13px}
+  .log .lin.orig span{color:var(--c-bonus)}
+  .log .lin{position:relative;display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #30343b;
+    padding:5px 8px;border-left:4px solid transparent;border-right:4px solid transparent;
+    border-radius:4px;background-color:#1e2127;touch-action:pan-y;
+    transition:transform .18s ease;user-select:none;-webkit-user-select:none}
+  .log .lin.drag{transition:none}
+  .log .lin b{white-space:nowrap}
+  .log .kill{position:absolute;top:0;right:0;bottom:0;width:72px;border:0;background:transparent;
+    color:#fff;font-size:22px;font-weight:800;cursor:pointer}
+  .log .lr.back .kill{font-size:20px}
+  .log .lr.open .kill,.log .lr.open .edit{z-index:3}   /* ligne ouverte : boutons au premier plan */
+  .log .lr.barre .lin span,.log .lr.barre .lin b{text-decoration:line-through;opacity:.45}
+  .log .hint{font-size:12px;color:#767c87;margin:0 0 6px}
+  /* ---- Journal : glissière Liste / Calendrier ---- */
+  .jhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0 10px}
+  .sec2 .jhead h3{margin:0}
+  .jsw{display:flex;align-items:center;gap:8px;border:0;background:none;cursor:pointer;
+    font-size:13px;font-weight:700;color:#767c87;padding:4px 0}
+  .jsw .on{color:#e8eaee}
+  .jsw .trk{position:relative;width:44px;height:24px;border-radius:12px;background:#33373f;transition:background .2s}
+  .jsw .trk i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:#e8eaee;transition:transform .2s}
+  .jsw.cal .trk{background:#2f6fd0}
+  .jsw.cal .trk i{transform:translateX(20px)}
+  /* ---- Journal en calendrier ---- */
+  .rchoix{display:flex;flex-direction:column;gap:8px;margin:4px 0 12px}
+  .rchoix label{display:flex;gap:10px;align-items:flex-start;background:#16181d;border:1px solid #3a3f48;
+    border-radius:12px;padding:10px 12px;cursor:pointer;font-size:15px;line-height:1.35}
+  .rchoix label.sel{border-color:#dc2626;background:#2a1618}
+  .rchoix input{width:18px;height:18px;flex:none;padding:0;margin-top:1px;accent-color:#dc2626}
+  .rchoix small{display:block;color:#9aa0aa;font-size:12px}
+  .cal{font-size:11px;color:#c4c8cf;line-height:1.2}
+  .cal .wd,.cal .wk{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin-bottom:3px}
+  .cal .wd{text-align:center;color:#767c87;font-weight:700}
+  .cal .cj{background:#16181d;border:1px solid #2c3038;border-radius:7px;padding:3px 1px 4px;min-height:78px;
+    display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;overflow:hidden;
+    font:inherit;color:inherit}
+  .cal .cj.vide{opacity:.28;cursor:default}
+  .cal .cj.auj{border-color:#9aa0aa}
+  .cal .cj.sel{background:#243049;border-color:#2f6fd0}
+  .cal .cj .n{font-size:11px;font-weight:700;color:#9aa0aa}
+  .cal .cj.auj .n{color:#fff}
+  .cal .bar{width:84%;height:4px;border-radius:2px;background:#2c3038;overflow:hidden;margin:2px 0 1px;flex:none}
+  .cal .bar i{display:block;height:100%;background:#c4c8cf}
+  .cal .bar.over i{background:#ef4444}
+  .cal .e{color:#9aa0aa} .cal .b{color:var(--c-bonus)} .cal .m{color:#f87171} .cal .d{color:var(--c-dev)}
+  .cal .jnet{font-weight:800;font-size:12px;margin-top:auto;padding-top:2px}
+  .cal .pos{color:#4ade80} .cal .neg{color:#f87171}
+  .cal .cu{font-size:10px;color:#767c87}
+  .cal .leg{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0 2px;font-size:11px;color:#767c87}
+  .cal .det{margin-top:10px;background:#16181d;border:1px solid #2c3038;border-radius:10px;padding:10px 12px;font-size:14px}
+  .cal .det h4{font-size:14px;color:#e8eaee;margin-bottom:6px}
+  .cal .det .r{display:flex;justify-content:space-between;gap:10px;padding:2px 0}
+  .cal .det .r b{white-space:nowrap}
+  .cal .det .sub{font-size:12px;color:#767c87;padding:0 0 2px 12px}
+  .cal .det .jtot{border-top:1px solid #30343b;margin-top:4px;padding-top:6px}
+  .cal .det .note{margin-top:6px;font-size:12px}
+  .sw{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .sw button{width:36px;height:36px;border-radius:50%;border:3px solid transparent;cursor:pointer;padding:0}
+  .sw button.sel{border-color:#fff}
+  .more{width:100%;margin-top:8px;border:0;border-radius:10px;background:#2b2f37;color:#9aa0aa;
+    padding:9px;font-size:13px;font-weight:700;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;gap:8px}
+  .more:active{background:#343945}
+  .more span{font-size:15px;line-height:1}
+  .devs{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font-size:13px;color:#c4c8cf}
+  .devs span{display:inline-flex;align-items:center;gap:6px}
+  .devs i{width:12px;height:12px;border-radius:50%;flex:0 0 auto}
+  .note{font-size:13px;color:#9aa0aa;margin-top:6px}
+  .sub{font-size:13px;color:#9aa0aa;margin:-4px 0 10px}
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <div class="lane" data-k="0" id="lane0">
+    <div class="charge"></div>
+    <div class="nm" id="nm0">Enfant 1</div>
+    <div class="stt"><span id="ico0">⏸</span><span id="st0">IL RESTE</span></div>
+    <div class="time"><span id="tmA0">0</span><span class="sec" id="tmB0">:00</span></div>
+    <div class="tot"><div class="tbar"></div><b id="tt0">0</b></div>
+    <div class="gwrap">
+      <div class="gauge">
+        <div class="gseg dev"   id="g30"></div>
+        <div class="gseg bonus" id="g20"></div>
+        <div class="gseg cum"   id="g10"></div>
+        <div class="gseg jour"  id="g00"></div>
+        <div class="gseg debt"  id="gd0"></div>
+      </div>
+      <div class="ovl" id="ov0">DÉPASSEMENT</div>
+      <div class="ticks" id="tk0"></div>
+      <div class="fini" id="fi0">FINI</div>
+    </div>
+    <div class="lg">
+      <span class="lgt">UTILISÉ :</span>
+      <span><i class="dot jour"></i>Jour <b id="l00">0 min</b></span>
+      <span><i class="dot cum"></i>Cumulé <b id="l10">0 min</b></span>
+      <span><i class="dot bonus"></i>Bonus <b id="l20">0 min</b></span>
+      <span><i class="dot dev"></i>Bonus devoirs <b id="l30">0 min</b></span>
+    </div>
+    <div class="brow">
+      <button class="go" id="go0">DÉMARRER</button>
+      <button class="hwb" id="dv0">BONUS DEVOIRS</button>
+      <button class="oub" id="ob0">OUBLI</button>
+    </div>
+  </div>
+
+  <div class="lane" data-k="1" id="lane1">
+    <div class="charge"></div>
+    <div class="nm" id="nm1">Enfant 2</div>
+    <div class="stt"><span id="ico1">⏸</span><span id="st1">IL RESTE</span></div>
+    <div class="time"><span id="tmA1">0</span><span class="sec" id="tmB1">:00</span></div>
+    <div class="tot"><div class="tbar"></div><b id="tt1">0</b></div>
+    <div class="gwrap">
+      <div class="gauge">
+        <div class="gseg dev"   id="g31"></div>
+        <div class="gseg bonus" id="g21"></div>
+        <div class="gseg cum"   id="g11"></div>
+        <div class="gseg jour"  id="g01"></div>
+        <div class="gseg debt"  id="gd1"></div>
+      </div>
+      <div class="ovl" id="ov1">DÉPASSEMENT</div>
+      <div class="ticks" id="tk1"></div>
+      <div class="fini" id="fi1">FINI</div>
+    </div>
+    <div class="lg">
+      <span class="lgt">UTILISÉ :</span>
+      <span><i class="dot jour"></i>Jour <b id="l01">0 min</b></span>
+      <span><i class="dot cum"></i>Cumulé <b id="l11">0 min</b></span>
+      <span><i class="dot bonus"></i>Bonus <b id="l21">0 min</b></span>
+      <span><i class="dot dev"></i>Bonus devoirs <b id="l31">0 min</b></span>
+    </div>
+    <div class="brow">
+      <button class="go" id="go1">DÉMARRER</button>
+      <button class="hwb" id="dv1">BONUS DEVOIRS</button>
+      <button class="oub" id="ob1">OUBLI</button>
+    </div>
+  </div>
+</div>
+
+<div class="ver" id="ver"></div>
+<button class="gear" id="gear" aria-label="Espace parents">⚙︎</button>
+<div class="net" id="net" title="Synchro"><i></i></div>
+<div class="syn" id="syn" title="Synchronisation"><i></i></div>
+<div class="bulle" id="bulle"></div>
+
+<!-- Code parent -->
+<div class="modal" id="pinModal">
+  <div class="card" style="max-width:340px">
+    <h2>Code parent <button class="x" data-close="pinModal">×</button></h2>
+    <div class="dots" id="dots"><i></i><i></i><i></i><i></i></div>
+    <div class="pad" id="pad"></div>
+    <div class="err" id="pinErr"></div>
+  </div>
+</div>
+
+<!-- Temps oublié -->
+<div class="modal" id="oubliModal">
+  <div class="card" style="max-width:380px">
+    <h2>Temps oublié <button class="x" data-close="oubliModal">×</button></h2>
+    <div class="sub" id="oubQui"></div>
+    <div class="stack">
+      <input id="oubMin" type="number" inputmode="numeric" min="1" step="5" placeholder="Durée en minutes">
+      <div class="row">
+        <input id="oubDeb" type="time" style="flex:1" aria-label="Heure de début">
+        <input id="oubFin" type="time" style="flex:1" aria-label="Heure de fin">
+      </div>
+      <div class="note">Les horaires sont facultatifs : ils servent au journal. Remplis-les sans durée et elle sera calculée.</div>
+      <button class="btn plus" id="oubOk" style="width:100%">Valider</button>
+    </div>
+    <div class="note" id="oubNote"></div>
+  </div>
+</div>
+
+<!-- Modifier une session (v3.3) -->
+<div class="modal" id="editModal" style="z-index:11">
+  <div class="card" style="max-width:380px">
+    <h2>Modifier <button class="x" data-close="editModal">×</button></h2>
+    <div class="sub" id="edQui"></div>
+    <div class="stack">
+      <div class="row">
+        <input id="edDeb" type="time" style="flex:1" aria-label="Heure de début">
+        <input id="edFin" type="time" style="flex:1" aria-label="Heure de fin">
+      </div>
+      <input id="edDur" type="number" inputmode="numeric" min="1" step="1" placeholder="Durée en minutes" aria-label="Durée en minutes">
+      <div class="note">Changer la durée recalcule l'heure de fin.</div>
+      <div class="note" id="edInfo"></div>
+      <button class="btn plus" id="edOk" style="width:100%">Valider</button>
+      <button class="btn" id="edRev" style="width:100%">Revenir à l'original</button>
+    </div>
+    <div class="err" id="edErr"></div>
+  </div>
+</div>
+
+<!-- Espace parents -->
+<div class="modal" id="resetModal" style="z-index:12">
+  <div class="card">
+    <h2>Réinitialiser ? <button class="x" data-close="resetModal">×</button></h2>
+    <div class="rchoix">
+      <label class="sel"><input type="radio" name="rType" value="compteurs" checked>
+        <span>Compteurs et journal<small>Cumulé, bonus, devoirs et journal remis à zéro. Prénoms, quotas, cadenas, facteur devoirs et code parent conservés.</small></span></label>
+      <label><input type="radio" name="rType" value="tout">
+        <span>Tout<small>Retour aux réglages d'origine : prénoms, quotas et code parent (1234) compris.</small></span></label>
+    </div>
+    <div class="note" id="rNote" style="margin-bottom:12px"></div>
+    <div class="row">
+      <button class="btn" id="rNo" style="flex:1">Annuler</button>
+      <button class="btn minus" id="rYes" style="flex:1">Réinitialiser</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="parentModal">
+  <div class="card">
+    <h2>Espace parents <button class="x" data-close="parentModal">×</button></h2>
+
+    <div class="sec2" style="margin-top:0">
+      <h3>Affichage de cet appareil</h3>
+      <div class="vsel" id="vueTabs"></div>
+      <button class="btn on" id="tkBtn" style="margin-top:10px;width:100%">Repères horaires : oui</button>
+      <div class="note">Propre à cet appareil : ces choix ne se synchronisent pas avec les autres.</div>
+      <div class="stack" style="margin-top:12px">
+        <input id="nmIn0" type="text" maxlength="14" placeholder="Prénom enfant 1">
+        <input id="nmIn1" type="text" maxlength="14" placeholder="Prénom enfant 2">
+      </div>
+    </div>
+
+    <div class="sec2">
+      <h3>Cet appareil</h3>
+      <input id="devName" type="text" maxlength="16" placeholder="Nom de cet appareil">
+      <div class="sw" id="devSw"></div>
+      <div class="note">Cette couleur teinte les lignes du journal écrites depuis cet appareil.</div>
+      <div class="devs" id="devList"></div>
+      <div class="note" id="devVer"></div>
+      <button class="btn" id="majBtn" style="margin-top:10px;width:100%">Vérifier les mises à jour</button>
+      <div class="note" id="majNote"></div>
+    </div>
+
+    <div class="sec2">
+      <h3>Réglages par enfant</h3>
+      <div class="scoped">
+      <div class="tabs" id="tabs"></div>
+      <div class="sub" id="whose"></div>
+
+      <h3>Bonus / malus</h3>
+      <div class="row" id="quick"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sign" id="cSign" title="Bonus ou malus">+</button>
+        <input id="cMin" type="number" inputmode="numeric" min="0" step="5" placeholder="minutes" style="flex:1">
+      </div>
+      <input id="cWhy" type="text" placeholder="Motif (facultatif)" style="margin-top:8px">
+      <button class="btn plus" id="cApply" style="width:100%;margin-top:8px">Valider</button>
+      <div class="note" id="cNote">Choisis un temps ou saisis-le, ajoute un motif, puis valide. Le bouton + / − passe en malus.</div>
+
+      <h3 style="margin-top:18px">Quotas par jour (minutes)</h3>
+      <div id="quotas"></div>
+      <div class="note" style="margin:-4px 0 8px">Le cadenas bloque l'usage du cumulé ce jour-là : seul le temps du jour est utilisable, le cumulé est mis de côté sans être perdu.</div>
+      <div style="border-top:1px solid #3a3f48;margin:14px 0 12px"></div>
+      <div class="q nolock">
+        <span>Facteur bonus devoirs</span>
+        <input id="facIn" type="number" inputmode="decimal" min="0" max="10" step="0.25">
+        <small id="facLab">×1</small>
+      </div>
+      <button class="btn" id="qApply" style="width:100%;margin-top:8px">Valider les quotas</button>
+      <div class="note">Le quota du jour s'applique immédiatement, les autres au jour venu. Fermer le menu annule une saisie non validée.</div>
+
+      <div class="jhead">
+        <h3>Journal</h3>
+        <button class="jsw" id="jSw" type="button" aria-label="Basculer entre liste et calendrier">
+          <span id="jL">Liste</span><span class="trk"><i></i></span><span id="jC">Calendrier</span>
+        </button>
+      </div>
+      <div class="note" id="jNote" style="margin:-4px 0 8px">Glisse une ligne vers la gauche : ✎ pour modifier ses horaires, ✕ pour la rayer (son temps est rendu), ↺ pour la rétablir. Touche une ligne marquée ✎ pour voir l'original.</div>
+      <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <div class="sec2">
+      <h3>Synchro</h3>
+      <div class="stack">
+        <input id="sUrl" type="url" placeholder="https://xxxx-default-rtdb.europe-west1.firebasedatabase.app">
+        <input id="sCode" type="text" placeholder="Code famille (ex. maison-triton-7f3a)">
+        <div class="row">
+          <button class="btn plus" id="sSave" style="flex:1">Connecter</button>
+          <button class="btn" id="sOff">Couper</button>
+        </div>
+      </div>
+      <div class="note" id="sNote"></div>
+    </div>
+
+    <div class="sec2">
+      <h3>Home Assistant</h3>
+      <div class="stack">
+        <input id="haUrl" type="url" placeholder="https://ha.exemple.fr/api/webhook/temps-ecran">
+        <button class="btn" id="haEmit">Cet appareil envoie : non</button>
+        <div class="row">
+          <button class="btn plus" id="haSave" style="flex:1">Enregistrer</button>
+          <button class="btn" id="haTest">Tester</button>
+        </div>
+      </div>
+      <div class="note" id="haNote"></div>
+    </div>
+
+    <div class="sec2">
+      <h3>Code parent</h3>
+      <div class="row">
+        <input id="newPin" type="password" inputmode="numeric" maxlength="4" placeholder="Nouveau code (4 chiffres)" style="flex:1">
+        <button class="btn" id="savePin">Changer</button>
+      </div>
+      <div class="note" id="pinNote"></div>
+    </div>
+
+    <div class="sec2">
+      <h3>Réinitialisation</h3>
+      <button class="btn danger" id="reset">Réinitialiser…</button>
+      <div class="note">Utile si les appareils n'affichent plus les mêmes valeurs : l'état remis à zéro
+        est imposé à tous les appareils synchronisés. Une confirmation est demandée.</div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var VERSION = '3.8';
+  var KEY  = 'tempsEcran_state';
+  var SKEY = 'tempsEcran_sync';
+  var DKEY = 'tempsEcran_device';
+  var HAKEY= 'tempsEcran_ha';
+  var DAYS = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  var ORDER = [1,2,3,4,5,6,0];
+  var MIN = 60000;
+  var KEEP = 45 * 864e5;
+  var DEFQ = [120,15,15,90,15,15,120];   // dim..sam
+
+  // Ordre de consommation ET ordre d'empilement (le dernier est tout en bas de la jauge)
+  var POOLS = ['dayLeft','carry','bonus','devoirs'];
+  // Les jours « cumul bloqué », le cumulé n'est ni consommable ni compté dans le
+  // total : il est mis de côté, pas perdu. Le dépassement se reporte alors sur le
+  // bonus, qui bascule lui aussi dans le cumulé à minuit.
+  function ordreDuJour(k, j){
+    return (k.bloque && k.bloque[j]) ? ['dayLeft','bonus','devoirs'] : POOLS;
+  }
+  function cibleDette(k, j){ return (k.bloque && k.bloque[j]) ? 'bonus' : 'carry'; }
+  var LABELS = { dayLeft:'Jour', bonus:'Bonus', devoirs:'Devoirs', carry:'Cumulé' };
+
+  function ls(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function lset(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  var $ = function(id){ return document.getElementById(id); };
+
+  var DEV = ls(DKEY);
+  if (!DEV){ DEV = Math.random().toString(36).slice(2,10); lset(DKEY, DEV); }
+
+  var VKEY = 'tempsEcran_vue';                 // 'two' | '0' | '1' — propre à l'appareil
+  var TKEY = 'tempsEcran_traits';              // '0' pour masquer les repères — propre à l'appareil
+  var PALETTE = ['#3b82f6','#22c55e','#f59e0b','#ec4899','#a855f7','#14b8a6','#ef4444','#84cc16'];
+
+  function dayKey(d){
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  function parseDay(k){ var p=k.split('-'); return new Date(+p[0], +p[1]-1, +p[2]); }
+  function hm(ts){ var d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+  function dm(ts){ var d=new Date(ts); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); }
+
+  // ---------- Format : « 1h29 » en grand, « :59 » en petit ----------
+  function parts(ms){
+    var neg = ms < 0; ms = Math.abs(ms);
+    var t = Math.floor(ms/1000), h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60;
+    return { main:(neg?'−':'') + (h>0 ? h+'h'+String(m).padStart(2,'0') : String(m)),
+             sec:':'+String(s).padStart(2,'0') };
+  }
+  function court(ms){                       // sans secondes, pour les pastilles
+    var neg = ms < 0; ms = Math.abs(ms);
+    var t = Math.floor(ms/1000), h = Math.floor(t/3600), m = Math.floor(t%3600/60);
+    return (neg?'−':'') + (h>0 ? h+'h'+String(m).padStart(2,'0') : m+' min');
+  }
+  // « 33 min/1h30 », « 1h08/1h30 », ou « 8/15 min » quand tout tient sous l'heure
+  function paire(u, t){
+    if (Math.abs(u) >= 3600000 || Math.abs(t) >= 3600000) return court(u) + '/' + court(t);
+    return Math.round(u/60000) + '/' + Math.round(t/60000) + ' min';
+  }
+
+  function direct(ms){ var q = parts(ms); return q.main + q.sec; }   // « 44:57 », « 1h29:59 »
+
+  // Journal : au-dessous d'une minute on affiche les secondes, sinon « 0 min » partout
+  function courtJ(ms){
+    return (Math.abs(ms) < 60000) ? Math.round(ms/1000) + ' s' : court(ms);
+  }
+
+  // ---------- État ----------
+  function freshKid(name){
+    var now = new Date(), q = DEFQ.slice();
+    return { name:name, quotas:q, factor:1, bloque:[false,false,false,false,false,false,false],
+             lastDay:dayKey(now), qj:{},
+             dayLeft:q[now.getDay()]*MIN, carry:0, bonus:0, devoirs:0,
+             tot:{ dayLeft:q[now.getDay()]*MIN, carry:0, bonus:0, devoirs:0 }, totFix:1,
+             running:null, devRun:null, adjustments:[], sessions:[] };
+  }
+  function fresh(){
+    return { pin:'1234', twoKids:false, kids:[freshKid('Enfant 1'), freshKid('Enfant 2')],
+             devices:{}, rev:1, updatedAt:Date.now(), by:DEV };
+  }
+
+  var migrated = false;
+
+  // Conversion depuis l'ancien modèle (credit + ajustements - sessions)
+  function fromOld(k, def){
+    var now = Date.now(), today = dayKey(new Date(now));
+    var quotas = (Array.isArray(k.quotas) && k.quotas.length === 7) ? k.quotas : DEFQ.slice();
+    var adjs = Array.isArray(k.adjustments) ? k.adjustments : [];
+    var sess = Array.isArray(k.sessions) ? k.sessions : [];
+    var adj = 0, used = 0, usedToday = 0;
+    adjs.forEach(function(a){ adj += a.min * MIN; });
+    sess.forEach(function(s){ var d = s.end - s.start; used += d; if (s.day === today) usedToday += d; });
+    var run = k.running || null;
+    if (run){ var e = now - run.start; used += e; if (run.day === today) usedToday += e; }
+    var tq = k.todayQuota || 0;
+    var remaining = (k.credit || 0) + adj - used;
+    var dayLeft = Math.max(0, Math.min(tq - usedToday, remaining));
+    if (run){ sess.push({ start:run.start, end:now, day:run.day, type:'jeu' }); run = { start:now, day:today }; }
+    migrated = true;
+    return { name:(typeof k.name === 'string' && k.name.trim()) ? k.name : def,
+             quotas:quotas, factor:1, lastDay:k.lastDay || today, qj:{},
+             dayLeft:dayLeft, carry:remaining - dayLeft, bonus:0, devoirs:0,
+             tot:{ dayLeft:Math.max(tq, dayLeft, 0), carry:remaining-dayLeft, bonus:0, devoirs:0 }, totFix:1,
+             running:run, devRun:null, adjustments:adjs, sessions:sess };
+  }
+
+  function normKid(k, def){
+    if (!k || typeof k !== 'object') return freshKid(def);
+    if (typeof k.dayLeft !== 'number') return fromOld(k, def);
+    k.name = (typeof k.name === 'string' && k.name.trim()) ? k.name : def;
+    k.quotas = (Array.isArray(k.quotas) && k.quotas.length === 7) ? k.quotas : DEFQ.slice();
+    k.factor = (typeof k.factor === 'number' && k.factor >= 0) ? k.factor : 1;
+    k.bloque = (Array.isArray(k.bloque) && k.bloque.length === 7)
+             ? k.bloque.map(function(x){ return !!x; })
+             : [false,false,false,false,false,false,false];
+    k.adjustments = Array.isArray(k.adjustments) ? k.adjustments : [];
+    k.sessions = Array.isArray(k.sessions) ? k.sessions : [];
+    k.running = k.running || null;
+    k.devRun  = k.devRun  || null;
+    ['dayLeft','carry','bonus','devoirs'].forEach(function(p){ if (typeof k[p] !== 'number') k[p] = 0; });
+    // totaux du jour : ce qui a été mis à disposition, pour afficher « utilisé / dispo »
+    var qJour = (k.quotas[parseDay(k.lastDay).getDay()] || 0) * MIN;
+    if (!k.tot || typeof k.tot !== 'object') k.tot = {};
+    POOLS.forEach(function(n){
+      if (typeof k.tot[n] !== 'number') k.tot[n] = (n === 'dayLeft') ? Math.max(qJour, k.dayLeft, 0)
+                                                                    : k[n];
+    });
+    // Réparation d'un défaut de la 1.0 : le total du jour avait été initialisé avec le
+    // temps RESTANT au lieu du quota du jour, d'où un « /1h02 » au lieu de « /1h30 ».
+    if (!k.totFix){
+      k.tot.dayLeft = Math.max(k.tot.dayLeft, qJour, k.dayLeft, 0);
+      k.totFix = 1; migrated = true;
+    }
+    k.lastDay = k.lastDay || dayKey(new Date());
+    // quota réellement en vigueur chaque jour (pour le calendrier du journal)
+    if (!k.qj || typeof k.qj !== 'object') k.qj = {};
+    if (typeof k.qj[k.lastDay] !== 'number') k.qj[k.lastDay] = k.quotas[parseDay(k.lastDay).getDay()] || 0;
+    return k;
+  }
+  function normalize(d){
+    if (!d || typeof d !== 'object') return null;
+    var ks = Array.isArray(d.kids) ? d.kids : [];
+    d.kids = [ normKid(ks[0], 'Enfant 1'), normKid(ks[1], 'Enfant 2') ];
+    d.pin = d.pin || '1234';
+    d.twoKids = !!d.twoKids;              // conservé pour régler l'affichage au premier lancement
+    d.devices = (d.devices && typeof d.devices === 'object') ? d.devices : {};
+    d.rev = d.rev || 1;
+    return d;
+  }
+  function save(){ lset(KEY, JSON.stringify(S)); }
+
+  var S = normalize(JSON.parse(ls(KEY) || 'null')) || fresh();
+  var sync = JSON.parse(ls(SKEY) || 'null') || { url:'', code:'' };
+  var ha = JSON.parse(ls(HAKEY) || 'null') || { url:'', emit:false };
+  var selKid = 0;
+  var pendQ = null, pendF = 1, pendB = null, pendKid = -1;   // saisie des quotas en attente
+
+  // L'affichage est local : au premier lancement on reprend l'ancien réglage partagé.
+  var vue = ls(VKEY);
+  if (vue !== 'two' && vue !== '0' && vue !== '1'){
+    // premier lancement : on reprend l'ancien réglage partagé s'il existait, sinon les deux
+    vue = (ls(KEY) && S.twoKids === false) ? '0' : 'two';
+    lset(VKEY, vue);                       // figé localement dès maintenant
+  }
+  function affiche(i){ return vue === 'two' || vue === String(i); }
+
+  // Repères horaires : visibles par défaut, réglage local à l'appareil
+  var traits = ls(TKEY) !== '0';
+  function appliqueTraits(){ document.body.classList.toggle('noticks', !traits); }
+  appliqueTraits();
+  function setVue(v){
+    vue = v; lset(VKEY, v);
+    fitKey = ['','']; prev = [null,null];
+    render(); refreshParent();
+  }
+
+  // Registre des appareils, partagé, pour colorer le journal
+  function coulLibre(){
+    var pris = {};
+    Object.keys(S.devices).forEach(function(id){ if (id !== DEV) pris[S.devices[id].color] = 1; });
+    for (var i=0;i<PALETTE.length;i++) if (!pris[PALETTE[i]]) return PALETTE[i];
+    return PALETTE[Object.keys(S.devices).length % PALETTE.length];
+  }
+  function moi(){ return S.devices[DEV] || { name:'Cet appareil', color:'#6b7280' }; }
+  function enregistreAppareil(){
+    if (!S.devices || typeof S.devices !== 'object') S.devices = {};
+    var d = S.devices[DEV];
+    if (d && d.ver === VERSION) return;
+    if (d){ d.ver = VERSION; }                    // l'appareil vient d'être mis à jour
+    else {
+      var n = Object.keys(S.devices).length + 1;
+      S.devices[DEV] = { name:'Appareil ' + n, color:coulLibre(), ver:VERSION };
+    }
+    S.rev = (S.rev||0)+1; S.updatedAt = Date.now(); S.by = DEV; save(); push();
+  }
+
+  function mutate(fn){
+    fn();
+    S.rev = (S.rev || 0) + 1; S.updatedAt = Date.now(); S.by = DEV;
+    save(); push(); render();
+  }
+
+  // ---------- Mise à jour automatique (v3.7) ----------
+  // L'app relit son propre fichier en contournant le cache et compare le numéro de
+  // version. Plus récent : elle recharge d'elle-même. Déclenchée à l'ouverture, au
+  // réveil, et dès qu'un autre appareil de la famille annonce une version plus récente.
+  var MKEY = 'tempsEcran_maj';                     // dernière tentative, contre les boucles
+  function cmpVer(a, b){                           // >0 si a est plus récente que b
+    var x = String(a).split('.'), y = String(b).split('.');
+    for (var i = 0; i < Math.max(x.length, y.length); i++){
+      var d = (parseInt(x[i],10) || 0) - (parseInt(y[i],10) || 0);
+      if (d) return d;
+    }
+    return 0;
+  }
+  var majEnCours = false, majDernier = 0;
+  // manuel : bouton. signal : un autre appareil annonce plus récent (on relit alors
+  // au plus toutes les 20 s). Sinon ouverture/réveil : au plus une fois par 30 s.
+  function verifMaj(manuel, signal){
+    if (!/^https?:$/.test(location.protocol)){     // fichier local ou lanceur : rien à relire
+      if (manuel) $('majNote').textContent = 'Mise à jour automatique indisponible ici (app ouverte hors GitHub).';
+      return;
+    }
+    if (majEnCours || (!manuel && Date.now() - majDernier < (signal ? 20000 : 30000))) return;
+    majEnCours = true; majDernier = Date.now();
+    if (manuel) $('majNote').textContent = 'Vérification…';
+    fetch(location.pathname + '?verif=' + Date.now(), { cache:'no-store' })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function(t){
+        var m = t.match(/var VERSION = '([^']+)'/);
+        if (!m){ if (manuel) $('majNote').textContent = 'Version en ligne illisible.'; return; }
+        if (cmpVer(m[1], VERSION) <= 0){
+          if (manuel) $('majNote').textContent = 'À jour : v' + VERSION + ' est la dernière version.';
+          return;
+        }
+        // Garde-fou : si on a déjà rechargé vers cette version il y a moins de 3 min
+        // et qu'on est toujours en retard, c'est le cache de GitHub : on patiente.
+        var der = {}; try{ der = JSON.parse(ls(MKEY) || '{}'); }catch(e){}
+        if (!manuel && der.v === m[1] && Date.now() - der.t < 180000) return;
+        lset(MKEY, JSON.stringify({ v:m[1], t:Date.now() }));
+        if (manuel) $('majNote').textContent = 'v' + m[1] + ' trouvée, mise à jour…';
+        save();                                    // l'état local survit au rechargement
+        location.replace(location.pathname + '?v=' + encodeURIComponent(m[1]));
+      })
+      .catch(function(){ if (manuel) $('majNote').textContent = 'Impossible de joindre GitHub pour l\'instant.'; })
+      .then(function(){ majEnCours = false; });
+  }
+  // un appareil de la famille tourne déjà plus récent que nous ?
+  function versionAnnoncee(){
+    var ids = Object.keys(S.devices || {});
+    for (var i = 0; i < ids.length; i++){
+      var v = S.devices[ids[i]] && S.devices[ids[i]].ver;
+      if (v && cmpVer(v, VERSION) > 0) return v;
+    }
+    return null;
+  }
+  $('majBtn').addEventListener('click', function(){ verifMaj(true); });
+  $('net').addEventListener('click', explique);
+  $('syn').addEventListener('click', explique);
+
+  // ---------- Synchro Firebase (REST + EventSource, sans SDK) ----------
+  var es = null, dirty = false, pushing = false, netState = 'off', vuLe = 0;
+  // Ce que le serveur contient, d'après le dernier état reçu ou envoyé avec succès.
+  // « Synchronisé » = rien en attente, et le serveur a exactement notre révision.
+  var srv = { rev:-1, by:'' }, ecartDepuis = 0;
+  function noteServeur(d){ if (d){ srv.rev = d.rev || 0; srv.by = d.by || ''; } }
+
+  function endpoint(){
+    if (!sync.url || !sync.code) return null;
+    return sync.url.replace(/\/+$/,'') + '/' + encodeURIComponent(sync.code) + '.json';
+  }
+  function setNet(s){ if (netState !== s){ netState = s; paintNet(); } }
+  var synEtat = '';
+  function paintSyn(){
+    var e;
+    if (!endpoint()) e = 'off';
+    else {
+      var pareil = !dirty && !pushing && srv.rev === (S.rev || 0) && srv.by === (S.by || '');
+      var vivant = netState === 'live' && Date.now() - vuLe < 70000;
+      if (pareil && vivant){ e = 'ok'; ecartDepuis = 0; }
+      else {
+        if (!ecartDepuis) ecartDepuis = Date.now();
+        // un envoi normal dure moins d'une seconde : au-delà de 10 s, c'est un vrai écart
+        e = (Date.now() - ecartDepuis < 10000 && netState !== 'down') ? 'envoi' : 'ecart';
+      }
+    }
+    if (e === synEtat) return;
+    synEtat = e;
+    $('syn').className = 'syn ' + e;
+    $('syn').title = TXT_SYN[e];
+  }
+  var TXT_SYN = {
+    off:   'Synchro désactivée : cet appareil fonctionne seul.',
+    ok:    'Synchronisé : cet appareil a exactement le même état que le serveur.',
+    envoi: 'Synchronisation en cours…',
+    ecart: 'Pas synchronisé : cet appareil n\'a pas le même état que le serveur. Il réessaie tout seul.'
+  };
+  var TXT_NET = { off:'Synchro désactivée.', wait:'Connexion au serveur…',
+                  live:'Connecté au serveur.', down:'Hors ligne : pas de connexion au serveur.' };
+  var bulleTmr = null;
+  function bulle(txt){
+    var b = $('bulle'); b.textContent = txt; b.classList.add('vis');
+    clearTimeout(bulleTmr); bulleTmr = setTimeout(function(){ b.classList.remove('vis'); }, 3500);
+  }
+  function explique(){
+    bulle('Point plein — ' + TXT_NET[netState] + '\nAnneau — ' + TXT_SYN[synEtat || 'off']);
+  }
+  function paintNet(){
+    var n = $('net'); n.className = 'net ' + netState;
+    n.title = { off:'Synchro désactivée', wait:'Connexion…', live:'Synchro active', down:'Hors ligne' }[netState];
+  }
+  function connect(){
+    if (es){ try{ es.close(); }catch(e){} es = null; }
+    var u = endpoint();
+    if (!u){ setNet('off'); return; }
+    setNet('wait');
+    try{
+      es = new EventSource(u);
+      vuLe = Date.now();
+      es.addEventListener('open', function(){ vuLe = Date.now(); setNet('live'); });
+      es.addEventListener('keep-alive', function(){ vuLe = Date.now(); setNet('live'); });
+      es.addEventListener('cancel', function(){ setNet('down'); });
+      es.addEventListener('auth_revoked', function(){ setNet('down'); });
+      es.onerror = function(){ setNet('down'); };
+      var onMsg = function(ev){
+        vuLe = Date.now(); setNet('live');
+        var m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
+        if (m.path !== '/'){ pull(); return; }
+        if (m.data === null){ srv.rev = -1; dirty = true; flush(); return; }
+        noteServeur(m.data);
+        if (!dirty && !pushing) adopt(m.data);
+      };
+      es.addEventListener('put', onMsg);
+      es.addEventListener('patch', onMsg);
+    }catch(e){ setNet('down'); }
+  }
+  function pull(){
+    var u = endpoint(); if (!u) return;
+    fetch(u).then(function(r){ return r.json(); }).then(function(d){
+      noteServeur(d);
+      if (d && !dirty && !pushing) adopt(d);
+    }).catch(function(){ setNet('down'); });
+  }
+  function push(){ if (endpoint()){ dirty = true; flush(); } }
+  function flush(){
+    var u = endpoint();
+    if (!u || pushing || !dirty) return;
+    pushing = true;
+    var snap = JSON.stringify(S);
+    // sans délai maximal, une requête figée par la mise en veille d'iOS laissait
+    // « pushing » bloqué : l'appareil n'envoyait ni ne recevait plus rien
+    var ctl = window.AbortController ? new AbortController() : null;
+    var tmo = setTimeout(function(){ if (ctl) ctl.abort(); }, 12000);
+    fetch(u, { method:'PUT', body:snap, headers:{ 'Content-Type':'application/json' }, signal:ctl ? ctl.signal : undefined })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); noteServeur(JSON.parse(snap));
+                         if (JSON.stringify(S) === snap) dirty = false; setNet('live'); })
+      .catch(function(){ setNet('down'); })
+      .then(function(){ clearTimeout(tmo); pushing = false; if (dirty) setTimeout(flush, 400); });
+  }
+  // Qui de a ou b est le plus récent. La révision d'abord, puis l'horodatage,
+  // puis l'identifiant d'appareil pour départager sans ambiguïté.
+  function plusRecent(a, b){
+    // une réinitialisation plus récente l'emporte toujours (v3.5)
+    if ((a.resetAt||0) !== (b.resetAt||0)) return (a.resetAt||0) > (b.resetAt||0);
+    if ((a.rev||0) !== (b.rev||0)) return (a.rev||0) > (b.rev||0);
+    if ((a.updatedAt||0) !== (b.updatedAt||0)) return (a.updatedAt||0) > (b.updatedAt||0);
+    return String(a.by||'') > String(b.by||'');
+  }
+
+  function adopt(d){
+    migrated = false;
+    d = normalize(d); if (!d) return;
+    if (d.by === DEV && d.rev === S.rev && !migrated) return;   // notre propre écho
+    if (!plusRecent(d, S)){
+      // L'état reçu est plus ancien que le nôtre. Il ne faut surtout pas se contenter
+      // de l'ignorer : sans cela les deux appareils restent connectés mais sourds
+      // l'un à l'autre. On republie le nôtre pour que le serveur rattrape.
+      if (plusRecent(S, d)){ dirty = true; flush(); }
+      return;
+    }
+    S = d; prev = [null,null];
+    enregistreAppareil();      // l'état reçu peut ne pas connaître encore cet appareil
+    pendKid = -1;              // sinon le formulaire des quotas garderait des valeurs
+                               // périmées et les réécrirait par-dessus celles reçues
+    save(); render(); refreshParent();
+    if (versionAnnoncee()) verifMaj(false, true);   // un autre appareil est déjà passé à une version plus récente
+    if (migrated){ mutate(function(){}); }      // republie l'état converti
+  }
+  function applySync(url, code){
+    sync = { url:(url||'').trim(), code:(code||'').trim() };
+    lset(SKEY, JSON.stringify(sync));
+    dirty = false;
+    pendKid = -1;              // les quotas vont arriver du serveur : on oublie la saisie locale
+    connect();
+    refreshParent();           // et on redessine tout de suite, sinon le formulaire reste figé
+  }
+  setInterval(flush, 5000);
+  // Chien de garde (v3.6) : Firebase envoie un signe de vie toutes les 30 s environ.
+  // Si plus rien n'arrive, le flux est mort sans le dire (veille d'iOS) : on rebranche.
+  setInterval(function(){
+    if (!endpoint() || document.visibilityState !== 'visible') return;
+    if (Date.now() - vuLe > 70000){ setNet('wait'); connect(); }
+  }, 10000);
+  function reveil(){ if (endpoint()){ connect(); flush(); } verifMaj(false); }
+  window.addEventListener('pageshow', function(e){ if (e.persisted) reveil(); });
+  window.addEventListener('online', function(){ connect(); flush(); });
+  window.addEventListener('offline', function(){ setNet(endpoint() ? 'down' : 'off'); });
+
+  // ---------- Home Assistant ----------
+  var haPrev = [null, null], haLast = '';
+  function haOn(){ return !!(ha.url && ha.emit); }
+  function haSend(fields){
+    if (!ha.url) return;
+    var body = Object.keys(fields).map(function(k){
+      return encodeURIComponent(k) + '=' + encodeURIComponent(fields[k]);
+    }).join('&');
+    try{
+      fetch(ha.url, { method:'POST', mode:'no-cors', body:body,
+                      headers:{ 'Content-Type':'application/x-www-form-urlencoded' } })
+        .then(function(){ haLast = 'dernier envoi à ' + hm(Date.now()); haNote(); })
+        .catch(function(){ haLast = 'échec à ' + hm(Date.now()); haNote(); });
+    }catch(e){}
+  }
+  function haFields(i, evt, c, run, lvl){
+    var actifs = [];
+    S.kids.forEach(function(k){ if (k.running) actifs.push(k.name); });
+    return {
+      evenement:evt, enfant:S.kids[i].name, index:i,
+      en_cours: run ? 'true' : 'false', niveau:lvl,
+      devoirs_en_cours: S.kids[i].devRun ? 'true' : 'false',
+      depassement: c.remaining < 0 ? 'true' : 'false',
+      restant_s: Math.round(c.remaining/1000), restant_min: Math.floor(c.remaining/MIN),
+      global_en_cours: actifs.length ? 'true' : 'false', enfants_en_cours: actifs.join(',')
+    };
+  }
+  function haWatch(i, run, lvl, c){
+    if (!haOn()){ haPrev[i] = null; return; }
+    var sig = (run?'on':'off') + '/' + lvl + '/' + (S.kids[i].devRun ? 'd' : '-');
+    if (haPrev[i] === null){ haPrev[i] = sig; return; }
+    if (haPrev[i] === sig) return;
+    var avant = haPrev[i].split('/');
+    haPrev[i] = sig;
+    var evt = (avant[0] === 'on') !== run ? (run ? 'demarrage' : 'arret')
+            : (avant[2] !== (S.kids[i].devRun ? 'd' : '-')) ? 'devoirs' : 'niveau';
+    haSend(haFields(i, evt, c, run, lvl));
+  }
+
+  // ---------- Calcul ----------
+  function devGain(k, now){                      // devoirs accumulés en direct
+    return k.devRun ? Math.round((now - k.devRun.start) * (k.factor || 1)) : 0;
+  }
+  // Retire `ms` des réserves, dans l'ordre. Le dépassement creuse le cumulé.
+  function applySpend(k, ms, j){
+    if (j == null) j = new Date().getDay();
+    ordreDuJour(k, j).forEach(function(n){
+      if (ms <= 0) return;
+      var take = Math.min(Math.max(k[n], 0), ms);
+      k[n] -= take; ms -= take;
+    });
+    if (ms > 0) k[cibleDette(k, j)] -= ms;
+  }
+  function compute(k, now){
+    var live = devGain(k, now);
+    var j = new Date(now).getDay(), bloque = !!(k.bloque && k.bloque[j]);
+    var p = { dayLeft:k.dayLeft, bonus:k.bonus, devoirs:k.devoirs + live, carry:k.carry };
+    var spend = k.running ? (now - k.running.start) : 0;
+    ordreDuJour(k, j).forEach(function(n){
+      if (spend <= 0) return;
+      var take = Math.min(Math.max(p[n], 0), spend);
+      p[n] -= take; spend -= take;
+    });
+    if (spend > 0) p[cibleDette(k, j)] -= spend;
+    var tot = {}, used = {}, sTot = 0, reste = 0, pos = 0, posTot = 0, dette = 0;
+    POOLS.forEach(function(n){
+      tot[n] = k.tot[n] + (n === 'devoirs' ? live : 0);
+      used[n] = Math.max(0, tot[n] - p[n]);
+      if (bloque && n === 'carry') return;     // mis de côté aujourd'hui
+      sTot += tot[n]; reste += p[n];
+      pos += Math.max(p[n], 0); posTot += Math.max(tot[n], 0);
+      dette += Math.min(p[n], 0);
+    });
+    dette = -dette;
+    return { p:p, live:live, tot:tot, used:used, dette:dette, bloque:bloque,
+             remaining: reste, total: sTot,
+             scale: Math.max(posTot, pos, 1) };
+  }
+
+  function rollover(){
+    var today = dayKey(new Date()), now = Date.now(), changed = false, cut = now - KEEP;
+    S.kids.forEach(function(k){
+      if (k.lastDay >= today) return;
+      // on solde les chronos en cours avant de tourner la page
+      if (k.running){ applySpend(k, now - k.running.start, parseDay(k.lastDay).getDay());
+                      k.sessions.push({ start:k.running.start, end:now, day:k.running.day, type:'jeu',
+                            by:k.running.by || DEV, byEnd:DEV });
+                      k.running = { start:now, day:today }; }
+      if (k.devRun){ var dur = now - k.devRun.start, f = k.factor || 1, g = Math.round(dur * f);
+                     k.devoirs += g; k.tot.devoirs += g;
+                     k.sessions.push({ start:k.devRun.start, end:now, day:k.lastDay,
+                                       type:'devoirs', dur:dur, factor:f, gain:g,
+                                       by:k.devRun.by || DEV, byEnd:DEV });
+                     k.devRun = { start:now, by:DEV }; }
+      while (k.lastDay < today){
+        var d = parseDay(k.lastDay); d.setDate(d.getDate()+1);
+        k.carry += k.dayLeft + k.bonus + k.devoirs;   // bonus et devoirs basculent en cumulé
+        k.bonus = 0; k.devoirs = 0;
+        k.dayLeft = k.quotas[d.getDay()] * MIN;
+        k.lastDay = dayKey(d);
+        k.qj = k.qj || {}; k.qj[k.lastDay] = k.quotas[d.getDay()];
+      }
+      var cutJ = dayKey(new Date(cut));
+      Object.keys(k.qj).forEach(function(j){ if (j < cutJ) delete k.qj[j]; });
+      k.tot = { dayLeft:k.dayLeft, carry:k.carry, bonus:0, devoirs:0 }; k.totFix = 1;
+      k.sessions = k.sessions.filter(function(s){ return s.end > cut; });
+      k.adjustments = k.adjustments.filter(function(a){ return a.ts > cut; });
+      changed = true;
+    });
+    if (changed){ S.rev = (S.rev||0)+1; S.updatedAt = Date.now(); S.by = DEV; save(); push(); }
+  }
+
+  // ---------- Lignes rayées (v3.2) ----------
+  // Une ligne rayée reste dans le journal, marquée « annule », et son effet sur les
+  // réserves est inversé une fois pour toutes. Comme la jauge ne lit que les
+  // réserves (état partagé), elle est juste sur tous les appareils, y compris
+  // ceux restés en 3.1 : eux verront simplement la ligne sans la rature.
+  // Un jour passé a déjà basculé dans le cumulé : c'est donc lui qu'on corrige.
+  function rendTemps(k, ms, jour){                 // rend du temps d'écran consommé
+    if (jour !== k.lastDay){ k.carry += ms; k.tot.carry += ms; return; }
+    var ordre = ordreDuJour(k, parseDay(jour).getDay()).slice().reverse();
+    ordre.forEach(function(n){                     // on remplit à rebours de la consommation
+      if (ms <= 0) return;
+      var manque = k.tot[n] - k[n];
+      if (manque > 0){ var r = Math.min(manque, ms); k[n] += r; ms -= r; }
+    });
+    if (ms > 0){ k.dayLeft += ms; k.tot.dayLeft += ms; }
+  }
+  function reprendTemps(k, ms, jour){              // la ligne est rétablie : on reconsomme
+    if (jour !== k.lastDay){ k.carry -= ms; k.tot.carry -= ms; return; }
+    applySpend(k, ms, parseDay(jour).getDay());
+  }
+  function gainJour(k, pool, ms, jour){            // ajoute (ms>0) ou retire (ms<0) un gain
+    if (jour !== k.lastDay){ k.carry += ms; k.tot.carry += ms; return; }
+    k[pool] += ms; k.tot[pool] += ms;
+    // devoirs déjà dépensés : ce qui manque se reprend sur les autres réserves
+    if (pool === 'devoirs' && k.devoirs < 0){
+      var x = -k.devoirs; k.devoirs = 0; applySpend(k, x, parseDay(jour).getDay());
+    }
+  }
+  // ---------- Modifier une session (v3.3) ----------
+  // Même principe que la rature : on ne rend ou ne reprend que l'écart de durée.
+  // Les horaires d'origine sont gardés dans « orig » (logo ✎ et retour possible).
+  function trouveSession(k, cle){
+    var p = cle.split(':'), ts = +p[1], e = null;
+    k.sessions.forEach(function(s){ if (s.start === ts && (s.type || 'jeu') === p[2]) e = s; });
+    return e;
+  }
+  function appliqueEdition(i, cle, ns, ne){
+    rollover();
+    var nouvelle = null;
+    mutate(function(){
+      var k = S.kids[i], s = trouveSession(k, cle);
+      if (!s || s.annule) return;
+      if (ns === s.start && ne === s.end) return;
+      var jour = s.day || dayKey(new Date(s.start));
+      if (!s.orig){
+        s.orig = { start:s.start, end:s.end };
+        if (s.type === 'devoirs'){ s.orig.gain = s.gain || 0; s.orig.dur = (typeof s.dur === 'number') ? s.dur : s.end - s.start; }
+      }
+      var retour = (ns === s.orig.start && ne === s.orig.end);
+      if (s.type === 'devoirs'){
+        var f = (typeof s.factor === 'number') ? s.factor : 1, g0 = s.gain || 0;
+        var g1 = retour ? s.orig.gain : Math.round((ne - ns) * f);
+        gainJour(k, 'devoirs', g1 - g0, jour);
+        s.gain = g1; s.dur = retour ? s.orig.dur : ne - ns;
+      } else {
+        var d0 = s.end - s.start, d1 = ne - ns;
+        if (d1 < d0) rendTemps(k, d0 - d1, jour);
+        else if (d1 > d0) reprendTemps(k, d1 - d0, jour);
+      }
+      s.start = ns; s.end = ne;
+      if (retour){ delete s.orig; delete s.modif; }
+      else s.modif = { ts:Date.now(), by:DEV };
+      nouvelle = 's:' + ns + ':' + (s.type || 'jeu');
+    });
+    drawLog();
+    return nouvelle;
+  }
+
+  var ed = null;       // session en cours d'édition
+  function jour0(ts){ var d = new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
+  function ouvreEdition(i, cle){
+    var s = trouveSession(S.kids[i], cle);
+    if (!s || s.annule) return;
+    ed = { i:i, cle:cle, start:s.start, end:s.end, type:s.type || 'jeu',
+           factor:(typeof s.factor === 'number') ? s.factor : 1, orig:s.orig || null };
+    $('edErr').textContent = '';
+    peintEdition();
+    open('editModal');
+  }
+  function peintEdition(saufChamp){
+    if (saufChamp !== 'deb') $('edDeb').value = hm(ed.start);
+    if (saufChamp !== 'fin') $('edFin').value = hm(ed.end);
+    if (saufChamp !== 'dur') $('edDur').value = Math.round((ed.end - ed.start) / MIN);
+    $('edQui').textContent = (ed.type === 'devoirs' ? 'Bonus devoirs' : 'Temps d\'écran') + ' de '
+                           + S.kids[ed.i].name + ', le ' + dm(ed.start) + '.';
+    var info = [];
+    if (ed.type === 'devoirs' && ed.end > ed.start)
+      info.push('Gain : ' + courtJ(Math.round((ed.end - ed.start) * ed.factor)) + (ed.factor !== 1 ? ' (× ' + ed.factor + ')' : '') + '.');
+    if (ed.orig) info.push('À l\'origine : ' + hm(ed.orig.start) + ' → ' + hm(ed.orig.end)
+                          + ' (' + courtJ(ed.orig.end - ed.orig.start) + ').');
+    $('edInfo').textContent = info.join(' ');
+    $('edRev').style.display = ed.orig ? '' : 'none';
+  }
+  $('edDeb').addEventListener('input', function(){
+    if (!ed || !$('edDeb').value) return;
+    ed.start = jour0(ed.start) + enMs($('edDeb').value);      // la fin ne bouge pas
+    $('edErr').textContent = ''; peintEdition('deb');
+  });
+  $('edFin').addEventListener('input', function(){
+    if (!ed || !$('edFin').value) return;
+    ed.end = jour0(ed.start) + enMs($('edFin').value);
+    if (ed.end <= ed.start) ed.end += 864e5;                  // la plage passe minuit
+    $('edErr').textContent = ''; peintEdition('fin');
+  });
+  $('edDur').addEventListener('input', function(){
+    var m = parseInt($('edDur').value, 10);
+    if (!ed || isNaN(m) || m <= 0) return;
+    ed.end = ed.start + m * MIN;                              // la durée recalcule la fin
+    $('edErr').textContent = ''; peintEdition('dur');
+  });
+  $('edOk').addEventListener('click', function(){
+    if (!ed) return;
+    var d = ed.end - ed.start;
+    if (d < MIN){ $('edErr').textContent = 'La durée doit faire au moins 1 minute.'; return; }
+    if (d > 864e5){ $('edErr').textContent = 'Une session ne peut pas dépasser 24 h.'; return; }
+    if (ed.end > Date.now() + 60000){ $('edErr').textContent = 'La fin ne peut pas être dans le futur.'; return; }
+    appliqueEdition(ed.i, ed.cle, ed.start, ed.end);
+    ed = null; close('editModal');
+  });
+  $('edRev').addEventListener('click', function(){
+    if (!ed || !ed.orig) return;
+    appliqueEdition(ed.i, ed.cle, ed.orig.start, ed.orig.end);
+    ed = null; close('editModal');
+  });
+
+  function basculeLigne(i, cle){
+    rollover();                                    // k.lastDay doit être à jour
+    var p = cle.split(':'), ts = +p[1];
+    mutate(function(){
+      var k = S.kids[i], e = null, jour, ms, annuler;
+      if (p[0] === 'a'){
+        k.adjustments.forEach(function(a){ if (a.ts === ts) e = a; });
+        if (!e) return;
+        annuler = !e.annule; jour = dayKey(new Date(e.ts)); ms = e.min * MIN;
+        gainJour(k, 'bonus', annuler ? -ms : ms, jour);
+      } else {
+        k.sessions.forEach(function(s){ if (s.start === ts && (s.type || 'jeu') === p[2]) e = s; });
+        if (!e) return;
+        annuler = !e.annule; jour = e.day || dayKey(new Date(e.start));
+        if (e.type === 'devoirs'){ ms = e.gain || 0; gainJour(k, 'devoirs', annuler ? -ms : ms, jour); }
+        else { ms = e.end - e.start; if (annuler) rendTemps(k, ms, jour); else reprendTemps(k, ms, jour); }
+      }
+      if (annuler) e.annule = { ts:Date.now(), by:DEV }; else delete e.annule;
+    });
+    drawLog();
+  }
+
+  // ---------- Son, vibration, écran ----------
+  var ac = null;
+  function ensureAudio(){ try{ if(!ac) ac = new (window.AudioContext||window.webkitAudioContext)(); if(ac.state==='suspended') ac.resume(); }catch(e){} }
+
+  // Une note = { f: fréquence, t: départ en s, d: durée, v: volume, w: forme d'onde }
+  function play(notes){
+    ensureAudio();
+    if (!ac) return;
+    notes.forEach(function(n){
+      try{
+        var o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime + n.t;
+        o.type = n.w || 'sine';
+        o.frequency.setValueAtTime(n.f, t);
+        if (n.f2) o.frequency.linearRampToValueAtTime(n.f2, t + n.d);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(n.v || 0.35, t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + n.d);
+        o.connect(g); g.connect(ac.destination);
+        o.start(t); o.stop(t + n.d + 0.03);
+      }catch(e){}
+    });
+  }
+
+  var SONS = {
+    // départ du chrono : deux notes qui montent
+    start:  [{f:523,t:0,d:.14},{f:784,t:.12,d:.22}],
+    // arrêt du chrono : deux notes qui descendent
+    stop:   [{f:784,t:0,d:.14},{f:392,t:.12,d:.26}],
+    // devoirs lancés : petit arpège clair qui monte
+    devOn:  [{f:523,t:0,d:.11},{f:659,t:.09,d:.11},{f:988,t:.18,d:.3,v:.32}],
+    // devoirs arrêtés : deux notes douces qui descendent
+    devOff: [{f:988,t:0,d:.11,v:.3},{f:659,t:.09,d:.11,v:.3},{f:523,t:.18,d:.3,v:.3}]
+  };
+  function son(nom){ play(SONS[nom] || []); }
+
+  // Petit rappel à 10 minutes de la fin
+  function alerteDixMinutes(){
+    try{ if(navigator.vibrate) navigator.vibrate([250,120,250]); }catch(e){}
+    play([{f:880,t:0,d:.28,v:.38},{f:880,t:.36,d:.28,v:.38},{f:1046.5,t:.72,d:.42,v:.38}]);
+  }
+
+  // Musique de fin, environ 10 secondes : un motif répété trois fois puis un accord tenu
+  function musiqueFin(){
+    try{ if(navigator.vibrate) navigator.vibrate([400,200,400,200,700]); }catch(e){}
+    var motif = [523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25, 392.00];
+    var notes = [], t = 0, r, n;
+    for (r = 0; r < 3; r++){
+      for (n = 0; n < motif.length; n++){
+        notes.push({ f:motif[n], t:t, d:.3, v:.32 });
+        t += .34;
+      }
+      t += .15;
+    }
+    [261.63, 329.63, 392.00].forEach(function(f){ notes.push({ f:f, t:t, d:1.7, v:.26 }); });
+    play(notes);
+  }
+  var wl = null;
+  function wakeOn(){ try{ if('wakeLock' in navigator && !wl) navigator.wakeLock.request('screen').then(function(l){ wl=l; l.addEventListener('release',function(){ wl=null; }); }).catch(function(){}); }catch(e){} }
+  function wakeOff(){ try{ if(wl) wl.release(); }catch(e){} wl=null; }
+  function anyActive(){          // l'écran ne reste allumé que pour ce que CET appareil montre
+    return [0,1].some(function(i){
+      return affiche(i) && (S.kids[i].running || S.kids[i].devRun);
+    });
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible'){ if (anyActive()) wakeOn(); reveil(); }
+  });
+
+  // ---------- Rendu ----------
+  var prev = [null, null], fitKey = ['',''];
+
+  function fitName(i){
+    var el = $('nm'+i);
+    var key = el.textContent + '|' + el.clientWidth + '|' + (S.twoKids ? 2 : 1);
+    if (fitKey[i] === key) return;
+    fitKey[i] = key;
+    el.style.fontSize = '';
+    var cs = getComputedStyle(el);
+    // clientWidth inclut les retraits : on ne garde que la largeur réellement utilisable
+    var avail = el.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+    if (avail <= 0){ fitKey[i] = ''; return; }
+    var over = el.scrollWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+    if (over > avail){
+      var base = parseFloat(cs.fontSize) || 40;
+      el.style.fontSize = Math.max(16, Math.floor(base * avail / over)) + 'px';
+    }
+  }
+
+  // Sous ~270 px de large, deux boutons côte à côte ne tiennent plus : on empile.
+  function checkNarrow(){
+    var w = $('lane0').clientWidth;
+    if (!w) return;
+    var n = w < 270;
+    if (document.body.classList.contains('narrow') !== n){
+      document.body.classList.toggle('narrow', n);
+      fitKey = ['',''];                 // les prénoms doivent être remesurés
+    }
+  }
+
+  // Un trait par heure pleine de l'échelle du jour
+  function drawTicks(i, scale){
+    var box = $('tk'+i), cle = Math.round(scale/60000);
+    if (box._cle === cle) return;
+    box._cle = cle; box.innerHTML = '';
+    // pas de 30 min : trait long + chiffre aux heures pleines, trait court aux demies
+    for (var m = 30 * 60000; m < scale; m += 30 * 60000){
+      var pct = m / scale * 100, pleine = (m % 3600000) === 0;
+      var t = document.createElement(pleine ? 'i' : 'b');
+      t.style.bottom = pct + '%';
+      box.appendChild(t);
+      if (pleine){
+        var lb = document.createElement('u');
+        lb.style.bottom = pct + '%';
+        lb.textContent = (m / 3600000) + 'h';
+        box.appendChild(lb);
+      }
+    }
+  }
+
+  function render(){
+    rollover();
+    var now = Date.now();
+    var b = document.body;
+    b.classList.toggle('two',   vue === 'two');
+    b.classList.toggle('solo0', vue === '0');
+    b.classList.toggle('solo1', vue === '1');
+    checkNarrow();
+
+    for (var i=0; i<2; i++){
+      var k = S.kids[i], c = compute(k, now), run = !!k.running, lane = $('lane'+i);
+      var lvl0 = c.remaining <= 0 ? 'over' : c.remaining <= 2*MIN ? 'low' : c.remaining <= 10*MIN ? 'warn' : 'ok';
+      haWatch(i, run, lvl0, c);            // Home Assistant suit les deux enfants
+      if (!affiche(i)){ prev[i] = null; continue; }
+
+      if (run && prev[i] !== null){
+        if (prev[i] > 10*MIN && c.remaining <= 10*MIN && c.remaining > 0) alerteDixMinutes();
+        if (prev[i] > 0 && c.remaining <= 0) musiqueFin();
+      }
+      prev[i] = run ? c.remaining : null;
+
+      var lvl = lvl0;
+      lane.className = 'lane' + (run ? ' running' : '') + ' lvl-' + lvl
+                     + (c.remaining < 0 ? ' over' : '') + (k.devRun ? ' charging' : '')
+                     + (!run && c.remaining <= 0 ? ' termine' : '');
+
+      if ($('nm'+i).textContent !== k.name) $('nm'+i).textContent = k.name;
+      fitName(i);
+      $('ico'+i).textContent = run ? '▶' : '⏸';
+      $('st'+i).textContent = 'IL RESTE';
+      var t = parts(c.remaining);
+      $('tmA'+i).textContent = t.main;
+      $('tmB'+i).textContent = t.sec;
+      $('tt'+i).textContent = court(c.total);
+      $('go'+i).textContent = run ? 'ARRÊTER' : 'DÉMARRER';
+
+      var vide = c.remaining <= 0;          // jauge vide dès qu'il ne reste rien
+      POOLS.forEach(function(n, idx){
+        var gele = c.bloque && n === 'carry';       // cumulé mis de côté aujourd'hui
+        $('g'+idx+i).style.height = (vide || gele) ? '0%' : Math.max(0, c.p[n]/c.scale*100) + '%';
+        // forme négative seulement quand rien n'était disponible : sinon « 40/30 min »
+        // reste plus parlant que « −10 min »
+        var el = $('l'+idx+i), neg = !gele && c.p[n] < 0 && c.tot[n] <= 0;
+        el.textContent = gele ? court(c.p[n]) + ' bloqué'
+                       : neg  ? court(c.p[n])
+                              : paire(c.used[n], c.tot[n]);
+        el.classList.toggle('neg', neg);
+        el.classList.toggle('gele', !!gele);
+      });
+      $('gd'+i).style.height = vide ? '0%' : (c.dette / c.scale * 100) + '%';
+      drawTicks(i, c.scale);
+
+      // Les deux chronos s'excluent : on grise celui qui n'est pas utilisable
+      $('dv'+i).classList.toggle('on', !!k.devRun);
+      $('dv'+i).disabled = run;
+      $('go'+i).disabled = !!k.devRun;
+    }
+    if (anyActive()) wakeOn(); else wakeOff();
+    paintSyn();
+    majLog();
+  }
+
+  // Tant que le menu est ouvert, les plages en cours défilent
+  function majLog(){
+    if (!$('parentModal').classList.contains('open')) return;
+    var k = S.kids[selKid], now = Date.now();
+    var sig = (k.running?'r':'') + (k.devRun?'d':'') + selKid;
+    if (sig !== logSig){ drawLog(); return; }
+    if (modeCal){ if ((k.running || k.devRun) && now - calT > 20000) drawLog(); return; }
+    var a = $('liveGoV'); if (a && k.running) a.textContent = '−' + direct(now - k.running.start);
+    var b2 = $('liveDevV'); if (b2 && k.devRun) b2.textContent = '+' + direct(devGain(k, now));
+  }
+
+  // ---------- Boutons principaux ----------
+  [0,1].forEach(function(i){
+    $('go'+i).addEventListener('click', function(){
+      ensureAudio();
+      var now = Date.now();
+      if (S.kids[i].devRun) return;          // devoirs en cours : on ne démarre pas l'écran
+      son(S.kids[i].running ? 'stop' : 'start');
+      mutate(function(){
+        var k = S.kids[i];
+        if (k.running){
+          applySpend(k, now - k.running.start);
+          k.sessions.push({ start:k.running.start, end:now, day:k.running.day, type:'jeu',
+                            by:k.running.by || DEV, byEnd:DEV });
+          k.running = null;
+        } else {
+          k.running = { start:now, day:dayKey(new Date(now)), by:DEV };
+        }
+      });
+      prev[i] = null;
+    });
+
+    $('dv'+i).addEventListener('click', function(){
+      ensureAudio();
+      var now = Date.now();
+      if (S.kids[i].running) return;         // écran en cours : on ne démarre pas les devoirs
+      son(S.kids[i].devRun ? 'devOff' : 'devOn');
+      mutate(function(){
+        var k = S.kids[i];
+        if (k.devRun){
+          var dur = now - k.devRun.start, f = k.factor || 1, g = Math.round(dur * f);
+          k.devoirs += g; k.tot.devoirs += g;
+          k.sessions.push({ start:k.devRun.start, end:now, day:dayKey(new Date(now)),
+                            type:'devoirs', dur:dur, factor:f, gain:g,
+                            by:k.devRun.by || DEV, byEnd:DEV });
+          k.devRun = null;
+        } else {
+          k.devRun = { start:now, by:DEV };
+        }
+      });
+      drawLog();
+    });
+  });
+
+  // ---------- Temps oublié ----------
+  function minuit(){ var d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+  function enMs(hhmm){ var p = hhmm.split(':'); return (+p[0])*3600000 + (+p[1])*60000; }
+
+  var oubKid = 0;
+  [0,1].forEach(function(i){
+    $('ob'+i).addEventListener('click', function(){
+      oubKid = i;
+      $('oubQui').textContent = 'Temps d\'écran de ' + S.kids[i].name + ' qui n\'a pas été chronométré.';
+      $('oubMin').value = ''; $('oubDeb').value = ''; $('oubFin').value = ''; $('oubNote').textContent = '';
+      open('oubliModal');
+    });
+  });
+  $('oubOk').addEventListener('click', function(){
+    var min = parseInt($('oubMin').value, 10);
+    var hd = $('oubDeb').value, hf = $('oubFin').value;
+    var deb = null, fin = null;
+    if (hd && hf){
+      deb = minuit() + enMs(hd); fin = minuit() + enMs(hf);
+      if (fin < deb) fin += 864e5;                       // la plage passe minuit
+      if (isNaN(min) || min <= 0) min = Math.round((fin - deb) / MIN);
+      else fin = deb + min * MIN;                        // la durée saisie fait foi
+    }
+    if (isNaN(min) || min <= 0){
+      $('oubNote').textContent = 'Indique une durée, ou les deux horaires.'; return;
+    }
+    if (deb === null){ fin = Date.now(); deb = fin - min * MIN; }
+    var i = oubKid, dur = min * MIN, d0 = deb, d1 = fin;
+    mutate(function(){
+      var k = S.kids[i];
+      applySpend(k, dur);                                // exactement comme une session jouée
+      k.sessions.push({ start:d0, end:d1, day:dayKey(new Date(d0)), type:'jeu',
+                        oubli:true, by:DEV, byEnd:DEV });
+    });
+    close('oubliModal'); drawLog();
+  });
+
+  // ---------- Modales ----------
+  function open(id){ $(id).classList.add('open'); }
+  function close(id){ $(id).classList.remove('open'); }
+  document.querySelectorAll('[data-close]').forEach(function(x){ x.addEventListener('click', function(){ close(x.getAttribute('data-close')); }); });
+
+  var entry = '';
+  ['1','2','3','4','5','6','7','8','9','','0','⌫'].forEach(function(key){
+    var bt = document.createElement('button'); bt.textContent = key;
+    if (!key){ bt.style.visibility='hidden'; }
+    bt.addEventListener('click', function(){
+      if (key==='⌫'){ entry = entry.slice(0,-1); }
+      else if (entry.length < 4){ entry += key; }
+      drawDots();
+      if (entry.length === 4){
+        if (entry === S.pin){ entry=''; drawDots(); close('pinModal'); openParent(); }
+        else { $('pinErr').textContent='Code incorrect'; setTimeout(function(){ entry=''; drawDots(); $('pinErr').textContent=''; }, 700); }
+      }
+    });
+    $('pad').appendChild(bt);
+  });
+  function drawDots(){ var d=$('dots').children; for(var i=0;i<4;i++) d[i].className = i<entry.length?'f':''; }
+  $('gear').addEventListener('click', function(){ entry=''; drawDots(); $('pinErr').textContent=''; open('pinModal'); });
+
+  // ---------- Bonus / malus ----------
+  function addAdj(min, why){
+    if (!min) return;
+    var i = selKid;
+    mutate(function(){
+      var k = S.kids[i];
+      // bonus comme malus atterrissent dans la réserve « bonus », qui peut devenir
+      // négative. Un malus ne doit pas ressembler à du temps joué.
+      k.bonus += min*MIN; k.tot.bonus += min*MIN;
+      k.adjustments.push({ ts:Date.now(), min:min, why:why||'', by:DEV });
+    });
+    drawLog();
+  }
+  var PRESETS = [ {min:5, lab:'+5 min'}, {min:15, lab:'+15 min'}, {min:30, lab:'+30 min'}, {min:60, lab:'+1 h'} ];
+  var presetBtn = [], sign = 1;
+  PRESETS.forEach(function(pr, idx){
+    var bt = document.createElement('button');
+    bt.className = 'btn preset'; bt.textContent = pr.lab;
+    bt.addEventListener('click', function(){
+      sign = 1; $('cMin').value = pr.min;
+      selPreset(idx); paintSign(); paintApply(); $('cWhy').focus();
+    });
+    presetBtn.push(bt); $('quick').appendChild(bt);
+  });
+  function selPreset(idx){ presetBtn.forEach(function(b,i){ b.classList.toggle('sel', i === idx); }); }
+  function syncPreset(){
+    var v = parseInt($('cMin').value, 10), idx = -1;
+    if (sign === 1) PRESETS.forEach(function(pr,i){ if (pr.min === v) idx = i; });
+    selPreset(idx);
+  }
+  function paintSign(){
+    $('cSign').textContent = sign === 1 ? '+' : '−';
+    $('cSign').className = 'btn sign' + (sign === 1 ? '' : ' neg');
+  }
+  function paintApply(){
+    var v = parseInt($('cMin').value, 10), ok = !isNaN(v) && v > 0;
+    $('cApply').disabled = !ok;
+    $('cApply').className = 'btn ' + (sign === 1 ? 'plus' : 'minus');
+    $('cApply').textContent = ok ? 'Valider ' + (sign === 1 ? '+' : '−') + v + ' min' : 'Valider';
+  }
+  function resetAdjForm(){ sign = 1; $('cMin').value=''; $('cWhy').value=''; selPreset(-1); paintSign(); paintApply(); }
+  $('cSign').addEventListener('click', function(){ sign = -sign; syncPreset(); paintSign(); paintApply(); });
+  $('cMin').addEventListener('input', function(){ syncPreset(); paintApply(); });
+  $('cApply').addEventListener('click', function(){
+    var v = parseInt($('cMin').value, 10);
+    if (isNaN(v) || v <= 0) return;
+    addAdj(sign * v, $('cWhy').value.trim() || (sign === 1 ? 'Bonus' : 'Malus'));
+    resetAdjForm();
+  });
+
+  // ---------- Onglets ----------
+  var tabBtn = [0,1].map(function(i){
+    var bt = document.createElement('button');
+    bt.addEventListener('click', function(){ selKid = i; refreshParent(); });
+    $('tabs').appendChild(bt);
+    return bt;
+  });
+  function drawTabs(){
+    [0,1].forEach(function(i){
+      if (tabBtn[i].textContent !== S.kids[i].name) tabBtn[i].textContent = S.kids[i].name;
+      tabBtn[i].className = (i === selKid ? 'sel' : '');
+    });
+    $('whose').textContent = 'Réglages de ' + S.kids[selKid].name + ', indépendants de l\'autre enfant.';
+  }
+
+  // ---------- Quotas + facteur devoirs, validés ensemble ----------
+  // (pendQ / pendF / pendKid déclarés plus haut)
+  function resetPend(){
+    var k = S.kids[selKid];
+    pendQ = k.quotas.slice(); pendF = k.factor; pendB = k.bloque.slice(); pendKid = selKid;
+  }
+  function qChanged(){
+    if (pendKid !== selKid || !pendQ) return false;
+    var k = S.kids[selKid];
+    if (pendF !== k.factor) return true;
+    if (pendB.some(function(v,d){ return !!v !== !!k.bloque[d]; })) return true;
+    return pendQ.some(function(v,d){ return v !== k.quotas[d]; });
+  }
+  function paintQBtn(){
+    var on = qChanged();
+    $('qApply').disabled = !on;
+    $('qApply').className = 'btn' + (on ? ' plus' : '');
+    $('qApply').textContent = on ? 'Valider les quotas' : 'Quotas à jour';
+  }
+  function drawQuotas(){
+    if (pendKid !== selKid || !pendQ) resetPend();
+    var box = $('quotas'); box.innerHTML = '';
+    ORDER.forEach(function(d){
+      var row = document.createElement('div'); row.className='q';
+      var lab = document.createElement('span'); lab.textContent = DAYS[d];
+      var inp = document.createElement('input'); inp.type='number'; inp.inputMode='numeric'; inp.min='0'; inp.step='5';
+      inp.value = pendQ[d];
+      var sm = document.createElement('small'); sm.textContent = court(pendQ[d]*MIN);
+      inp.addEventListener('input', function(){
+        var v = Math.max(0, parseInt(inp.value,10) || 0);
+        pendQ[d] = v; sm.textContent = court(v*MIN); paintQBtn();
+      });
+      var lk = document.createElement('button');
+      lk.title = 'Bloquer l\'usage du cumulé ce jour-là';
+      var peindre = function(){ lk.className = 'lock' + (pendB[d] ? ' on' : '');
+                                lk.textContent = pendB[d] ? '🔒' : '🔓'; };
+      peindre();
+      lk.addEventListener('click', function(){ pendB[d] = !pendB[d]; peindre(); paintQBtn(); });
+      row.appendChild(lab); row.appendChild(inp); row.appendChild(sm); row.appendChild(lk);
+      box.appendChild(row);
+    });
+    $('facIn').value = pendF;
+    $('facLab').textContent = '×' + pendF;
+    paintQBtn();
+  }
+  $('facIn').addEventListener('input', function(){
+    var v = parseFloat($('facIn').value);
+    if (isNaN(v) || v < 0) v = 0;
+    pendF = v; $('facLab').textContent = '×' + v; paintQBtn();
+  });
+  $('qApply').addEventListener('click', function(){
+    if (!qChanged()) return;
+    var i = selKid, q = pendQ.slice(), f = pendF, bl = pendB.slice(), jour = new Date().getDay();
+    mutate(function(){
+      var k = S.kids[i];
+      // le quota d'aujourd'hui prend effet tout de suite : on reporte l'écart
+      // sur la réserve du jour et sur son total, sans toucher au temps déjà utilisé
+      var ecart = (q[jour] - k.quotas[jour]) * MIN;
+      k.quotas = q; k.factor = f; k.bloque = bl;
+      if (ecart){ k.dayLeft += ecart; k.tot.dayLeft += ecart; }
+      k.qj = k.qj || {}; k.qj[dayKey(new Date())] = q[jour];
+    });
+    resetPend(); paintQBtn();
+  });
+
+  // ---------- Journal ----------
+  var logSig = '', logShow = 20, logKid = -1;
+  var JKEY = 'tempsEcran_journal';               // 'cal' ou 'liste' — propre à l'appareil
+  var modeCal = ls(JKEY) === 'cal', calSel = null, calWeeks = 5, calT = 0;
+  function paintJsw(){
+    $('jSw').classList.toggle('cal', modeCal);
+    $('jL').classList.toggle('on', !modeCal); $('jC').classList.toggle('on', modeCal);
+    $('jNote').textContent = modeCal
+      ? 'Chaque case résume une journée : écran utilisé, bonus, malus, devoirs, puis l\'apport net au cumulé et le cumulé en fin de journée. Touche une case pour le détail.'
+      : 'Glisse une ligne vers la gauche : ✎ pour modifier ses horaires, ✕ pour la rayer (son temps est rendu), ↺ pour la rétablir. Touche une ligne marquée ✎ pour voir l\'original.';
+  }
+  $('jSw').addEventListener('click', function(){
+    modeCal = !modeCal; lset(JKEY, modeCal ? 'cal' : 'liste'); drawLog();
+  });
+
+  // ---------- Journal en calendrier ----------
+  // Bilan par jour reconstruit depuis les lignes du journal (les lignes rayées ne comptent pas).
+  // Apport au cumulé = quota − écran + bonus − malus + devoirs : c'est exactement ce qui
+  // bascule dans le cumulé à minuit. On remonte le temps depuis le cumulé actuel.
+  function cc(ms, signe){                        // format compact pour les cases
+    var m = Math.round(Math.abs(ms) / MIN), h = Math.floor(m / 60);
+    var t = h ? h + 'h' + String(m % 60).padStart(2, '0') : String(m);
+    return (signe ? (ms < 0 && m ? '−' : (m ? '+' : '')) : '') + t;
+  }
+  function bilanJours(k, now){
+    var J = {}, today = dayKey(new Date(now));
+    function g(j){ return J[j] || (J[j] = { ecran:0, nS:0, bonus:0, malus:0, dev:0, adj:[] }); }
+    k.sessions.forEach(function(s){
+      if (s.annule) return;
+      var j = s.day || dayKey(new Date(s.start));
+      if (s.type === 'devoirs') g(j).dev += s.gain || 0;
+      else { g(j).ecran += s.end - s.start; g(j).nS++; }
+    });
+    k.adjustments.forEach(function(a){
+      if (a.annule) return;
+      var x = g(dayKey(new Date(a.ts)));
+      if (a.min > 0) x.bonus += a.min * MIN; else x.malus += -a.min * MIN;
+      x.adj.push(a);
+    });
+    if (k.running){ var r = g(today); r.ecran += now - k.running.start; r.nS++; r.live = true; }
+    if (k.devRun){ var d = g(today); d.dev += devGain(k, now); d.live = true; }
+    g(today);
+    Object.keys(J).forEach(function(j){
+      var x = J[j], q = (k.qj && typeof k.qj[j] === 'number') ? k.qj[j] : k.quotas[parseDay(j).getDay()];
+      x.quota = (q || 0) * MIN;
+      x.net = x.quota - x.ecran + x.bonus - x.malus + x.dev;
+    });
+    return J;
+  }
+  function drawCal(k){
+    var now = Date.now(), J = bilanJours(k, now), today = dayKey(new Date(now));
+    calT = now;
+    // premier jour connu, sans remonter au-delà de ce que le journal conserve
+    var t0 = parseDay(today); t0.setDate(t0.getDate() - 43);
+    var borne = dayKey(t0), debut = today;
+    Object.keys(J).concat(Object.keys(k.qj || {})).forEach(function(j){ if (j < debut) debut = j; });
+    if (debut < borne) debut = borne;
+    // cumulé en fin de journée, en remontant depuis le cumulé du matin
+    var cum = {}, c = k.tot.carry, d = parseDay(today);
+    cum[today] = c + J[today].net;
+    while (true){
+      d.setDate(d.getDate() - 1);
+      var j = dayKey(d); if (j < debut) break;
+      cum[j] = c;
+      c -= J[j] ? J[j].net : ((k.qj && typeof k.qj[j] === 'number') ? k.qj[j] : k.quotas[d.getDay()]) * MIN;
+    }
+    var box = $('log'); box.innerHTML = ''; ouverte = null;
+    var cal = document.createElement('div'); cal.className = 'cal';
+    var wd = document.createElement('div'); wd.className = 'wd';
+    ['L','M','M','J','V','S','D'].forEach(function(x){ var e = document.createElement('div'); e.textContent = x; wd.appendChild(e); });
+    cal.appendChild(wd);
+    // semaines du lundi au dimanche, la plus récente en haut (comme la liste)
+    var lun = parseDay(today); lun.setDate(lun.getDate() - ((lun.getDay() + 6) % 7));
+    var nbSem = 0, plusVieux = false;
+    while (true){
+      var dim = new Date(lun); dim.setDate(dim.getDate() + 6);
+      if (dayKey(dim) < debut) break;
+      if (nbSem >= calWeeks){ plusVieux = true; break; }
+      var wk = document.createElement('div'); wk.className = 'wk';
+      for (var n = 0; n < 7; n++){
+        var dd = new Date(lun); dd.setDate(dd.getDate() + n);
+        wk.appendChild(caseJour(dayKey(dd), dd));
+      }
+      cal.appendChild(wk); nbSem++;
+      lun.setDate(lun.getDate() - 7);
+    }
+    function caseJour(j, dd){
+      var e = document.createElement('button'); e.type = 'button'; e.className = 'cj';
+      var nb = document.createElement('span'); nb.className = 'n'; nb.textContent = dd.getDate();
+      e.appendChild(nb);
+      if (j > today || j < debut){ e.classList.add('vide'); e.disabled = true; return e; }
+      var x = J[j] || { ecran:0, bonus:0, malus:0, dev:0, adj:[], nS:0,
+                        quota:(((k.qj && typeof k.qj[j] === 'number') ? k.qj[j] : k.quotas[dd.getDay()]) || 0) * MIN };
+      if (x.net == null) x.net = x.quota;
+      if (j === today) e.classList.add('auj');
+      if (j === calSel) e.classList.add('sel');
+      var dispo = x.quota + x.bonus - x.malus + x.dev;
+      var bar = document.createElement('span'); bar.className = 'bar' + (x.net < 0 ? ' over' : '');
+      var bi = document.createElement('i');
+      bi.style.width = (dispo > 0 ? Math.min(100, x.ecran / dispo * 100) : (x.ecran ? 100 : 0)) + '%';
+      bar.appendChild(bi); e.appendChild(bar);
+      bar.title = 'Écran utilisé / temps disponible ce jour-là';
+      function li(cls, txt){ var s = document.createElement('span'); s.className = cls; s.textContent = txt; e.appendChild(s); }
+      if (x.ecran >= 30000) li('e', '▸' + cc(x.ecran));
+      if (x.bonus) li('b', '+' + cc(x.bonus));
+      if (x.malus) li('m', '−' + cc(x.malus));
+      if (x.dev >= 30000) li('d', '+' + cc(x.dev));
+      li('jnet ' + (x.net >= 0 ? 'pos' : 'neg'), cc(x.net, true) || '0');
+      li('cu', 'Σ' + cc(cum[j], true).replace('+', ''));
+      e.addEventListener('click', function(){ calSel = (calSel === j) ? null : j; drawCal(k); });
+      return e;
+    }
+    var leg = document.createElement('div'); leg.className = 'leg';
+    leg.innerHTML = '<span class="e">▸ écran</span><span class="b">+ bonus</span><span class="m">− malus</span>'
+                  + '<span class="d">+ devoirs</span><span class="pos">apport net</span><span>Σ cumulé du soir</span>';
+    cal.appendChild(leg);
+    if (plusVieux){
+      var bt = document.createElement('button'); bt.className = 'more';
+      var fl = document.createElement('span'); fl.textContent = '▾'; bt.appendChild(fl);
+      bt.appendChild(document.createTextNode('Semaines précédentes'));
+      bt.addEventListener('click', function(){ calWeeks += 4; drawCal(k); });
+      cal.appendChild(bt);
+    }
+    if (calSel && calSel >= debut && calSel <= today) cal.appendChild(detailJour(k, calSel, J[calSel], cum, today));
+    box.appendChild(cal);
+  }
+  function detailJour(k, j, x, cum, today){
+    var dd = parseDay(j);
+    if (!x){ var q = (k.qj && typeof k.qj[j] === 'number') ? k.qj[j] : k.quotas[dd.getDay()];
+             x = { ecran:0, nS:0, bonus:0, malus:0, dev:0, adj:[], quota:(q || 0) * MIN }; x.net = x.quota; }
+    var w = document.createElement('div'); w.className = 'det';
+    var h = document.createElement('h4');
+    h.textContent = DAYS[dd.getDay()] + ' ' + dm(dd.getTime()) + (j === today ? ' (aujourd\'hui, en cours)' : '');
+    w.appendChild(h);
+    function r(lab, val, cls, extra){
+      var e = document.createElement('div'); e.className = 'r' + (extra ? ' ' + extra : '');
+      var a = document.createElement('span'); a.textContent = lab;
+      var b = document.createElement('b'); b.textContent = val; if (cls) b.className = cls;
+      e.appendChild(a); e.appendChild(b); w.appendChild(e);
+    }
+    function sub(txt){ var e = document.createElement('div'); e.className = 'sub'; e.textContent = txt; w.appendChild(e); }
+    var cumVeille = cum[j] - x.net;
+    r('Cumulé au matin', court(cumVeille));
+    r('Quota du jour', '+' + court(x.quota), 'pos');
+    r('Écran' + (x.nS ? ' (' + x.nS + (x.nS > 1 ? ' plages)' : ' plage)') : ''), x.ecran ? '−' + courtJ(x.ecran) : '0 min', 'e');
+    if (x.bonus || x.malus){
+      if (x.bonus) r('Bonus', '+' + court(x.bonus), 'b');
+      if (x.malus) r('Malus', '−' + court(x.malus), 'm');
+      x.adj.slice().sort(function(a, b){ return a.ts - b.ts; }).forEach(function(a){
+        sub(hm(a.ts) + ' · ' + (a.min > 0 ? '+' : '−') + Math.abs(a.min) + ' min' + (a.why ? ' · ' + a.why : ''));
+      });
+    }
+    if (x.dev) r('Devoirs', '+' + courtJ(x.dev), 'd');
+    r('Apport au cumulé', (x.net < 0 ? '−' : '+') + court(Math.abs(x.net)), x.net < 0 ? 'neg' : 'pos', 'jtot');
+    r(j === today ? 'Cumulé si la journée s\'arrêtait là' : 'Cumulé en fin de journée', court(cum[j]));
+    if (k.bloque && k.bloque[dd.getDay()]){
+      var n = document.createElement('div'); n.className = 'note';
+      n.textContent = 'Cumulé actuellement bloqué ce jour de la semaine : un dépassement est pris sur le bonus, puis reporté dans le cumulé à minuit.';
+      w.appendChild(n);
+    }
+    return w;
+  }
+
+  // Glisser une ligne vers la gauche découvre ✎ (modifier) et ✕ (rayer), ou ↺ si
+  // elle est déjà rayée. Un simple toucher sur une ligne modifiée montre l'original.
+  var ouverte = null;
+  function fermeOuverte(){ if (ouverte){ ouverte.style.transform = ''; ouverte.parentNode.classList.remove('open'); ouverte = null; } }
+  function glisse(lin, OUV, surToucher){
+    var x0 = 0, y0 = 0, dx = 0, base = 0, actif = false, decide = false, pid = null;
+    lin.addEventListener('pointerdown', function(e){
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      pid = e.pointerId; x0 = e.clientX; y0 = e.clientY; dx = 0;
+      actif = true; decide = false; base = (ouverte === lin) ? -OUV : 0;
+    });
+    lin.addEventListener('pointermove', function(e){
+      if (!actif || e.pointerId !== pid) return;
+      var mx = e.clientX - x0, my = e.clientY - y0;
+      if (!decide){
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        if (Math.abs(my) > Math.abs(mx)){ actif = false; return; }   // défilement vertical
+        decide = true; lin.classList.add('drag');
+        try{ lin.setPointerCapture(pid); }catch(_){}
+        if (ouverte && ouverte !== lin) fermeOuverte();
+      }
+      dx = Math.min(0, Math.max(-OUV - 24, base + mx));
+      lin.style.transform = 'translateX(' + dx + 'px)';
+    });
+    function fin(){
+      if (!actif) return;
+      actif = false;
+      if (!decide){                                                   // simple toucher
+        if (ouverte === lin){ fermeOuverte(); return; }
+        if (ouverte) fermeOuverte();
+        if (surToucher) surToucher();
+        return;
+      }
+      lin.classList.remove('drag');
+      if (dx < -OUV/2){ lin.style.transform = 'translateX(' + (-OUV) + 'px)'; ouverte = lin; lin.parentNode.classList.add('open'); }
+      else { lin.style.transform = ''; lin.parentNode.classList.remove('open'); if (ouverte === lin) ouverte = null; }
+    }
+    lin.addEventListener('pointerup', fin);
+    lin.addEventListener('pointercancel', fin);
+  }
+  function drawLog(){
+    var k = S.kids[selKid], items = [], now = Date.now();
+    if (logKid !== selKid){ logShow = 20; logKid = selKid; calSel = null; calWeeks = 5; }   // on repart du début par enfant
+    logSig = (k.running?'r':'') + (k.devRun?'d':'') + selKid;
+    paintJsw();
+    if (modeCal){ drawCal(k); return; }
+    // plages encore ouvertes : on les montre déjà, l'heure de fin viendra
+    if (k.running) items.push({ ts:k.running.start, by:k.running.by, vid:'liveGoV',
+      txt:'Écran ' + hm(k.running.start) + ' → en cours',
+      val:'−' + direct(now - k.running.start) });
+    if (k.devRun) items.push({ ts:k.devRun.start, by:k.devRun.by, vid:'liveDevV',
+      txt:'Bonus devoirs ' + hm(k.devRun.start) + ' → en cours',
+      val:'+' + direct(devGain(k, now)) });
+    k.adjustments.forEach(function(a){ items.push({ ts:a.ts, txt:a.why, by:a.by, heure:true,
+      cle:'a:'+a.ts, annule:!!a.annule,
+      val:(a.min>0?'+':'−')+Math.abs(a.min)+' min' }); });
+    k.sessions.forEach(function(s){
+      var cle = 's:' + s.start + ':' + (s.type || 'jeu');
+      if (s.type === 'devoirs'){
+        var dur = (typeof s.dur === 'number') ? s.dur : (s.end - s.start);
+        var f = (typeof s.factor === 'number') ? s.factor : 1;
+        var txt = 'Bonus devoirs ' + courtJ(dur);
+        if (f !== 1) txt += ' × ' + f + ' = ' + courtJ(s.gain || 0);
+        var it1 = { ts:s.start, txt:txt, by:s.by, byEnd:s.byEnd, heure:true, cle:cle, annule:!!s.annule,
+                    modif:true, val:'+'+courtJ(s.gain||0) };
+        if (s.orig){ var og = (typeof s.orig.gain === 'number') ? s.orig.gain : Math.round((s.orig.end - s.orig.start) * f);
+          it1.origTxt = 'À l\'origine : ' + hm(s.orig.start) + ' → ' + hm(s.orig.end) + ', ' + courtJ(s.orig.end - s.orig.start);
+          it1.origVal = '+' + courtJ(og); }
+        items.push(it1);
+      }
+      else {
+        var it2 = { ts:s.start, by:s.by, byEnd:s.byEnd, cle:cle, annule:!!s.annule, modif:true,
+          txt:'Écran '+hm(s.start)+' → '+hm(s.end)+(s.oubli ? ' (oubli)' : ''),
+          val:'−'+court(s.end-s.start) };
+        if (s.orig){ it2.origTxt = 'À l\'origine : ' + hm(s.orig.start) + ' → ' + hm(s.orig.end);
+                     it2.origVal = '−' + court(s.orig.end - s.orig.start); }
+        items.push(it2);
+      }
+    });
+    items.sort(function(a,b){ return b.ts-a.ts; });
+    var box = $('log'); box.innerHTML = ''; ouverte = null;
+    if (!items.length){ box.textContent = 'Rien pour l\'instant.'; return; }
+    var i = selKid;
+    items.slice(0, logShow).forEach(function(it){
+      var w = document.createElement('div');
+      w.className = 'lr' + (it.vid ? ' live' : '') + (it.annule ? ' barre back' : '');
+      var r = document.createElement('div'); r.className = 'lin';
+      var d1 = it.by && S.devices[it.by];
+      var d2 = (it.byEnd && S.devices[it.byEnd]) || d1;
+      if (d1){
+        var c1 = d1.color, c2 = d2.color;
+        // moitié gauche : l'appareil qui a démarré. Moitié droite : celui qui a arrêté.
+        // (teinte posée sur un fond opaque, pour masquer le bouton caché dessous)
+        r.style.backgroundImage = (c1 === c2) ? 'linear-gradient(' + c1 + '2e,' + c1 + '2e)'
+          : 'linear-gradient(to right,' + c1 + '2e 0%,' + c1 + '2e 38%,'
+                                        + c2 + '2e 62%,' + c2 + '2e 100%)';
+        r.style.borderLeftColor = c1;
+        r.style.borderRightColor = c2;
+        r.title = (c1 === c2) ? d1.name : ('Démarré par ' + d1.name + ', arrêté par ' + d2.name);
+      }
+      var l = document.createElement('span');
+      // les lignes de session portent déjà leur plage horaire ; les autres reçoivent l'heure
+      var txtNormal = dm(it.ts) + (it.heure ? ' '+hm(it.ts) : '') + ' · ' + it.txt;
+      l.textContent = txtNormal;
+      var mk = null;
+      if (it.origTxt){                                   // logo « modifié »
+        mk = document.createElement('i'); mk.className = 'mod'; mk.textContent = '✎';
+        mk.title = 'Modifiée'; l.appendChild(mk);
+      }
+      var v = document.createElement('b'); v.textContent = it.val;
+      if (it.vid){ v.id = it.vid; r.style.fontStyle = 'italic'; }
+      r.appendChild(l); r.appendChild(v);
+      if (it.cle){
+        var cle = it.cle, peutModif = it.modif && !it.annule;
+        var kb = document.createElement('button');
+        kb.className = 'kill';
+        kb.textContent = it.annule ? '↺' : '✕';
+        kb.setAttribute('aria-label', it.annule ? 'Rétablir la ligne' : 'Rayer la ligne');
+        kb.addEventListener('click', function(){ basculeLigne(i, cle); });
+        w.appendChild(kb);
+        if (peutModif){
+          var eb = document.createElement('button');
+          eb.className = 'edit'; eb.textContent = '✎';
+          eb.setAttribute('aria-label', 'Modifier la ligne');
+          eb.addEventListener('click', function(){ fermeOuverte(); ouvreEdition(i, cle); });
+          w.appendChild(eb);
+        }
+        // un toucher sur une ligne modifiée montre l'original quelques secondes
+        var montre = it.origTxt ? (function(txtO, valO, valN){
+          var tmr = null;
+          return function(){
+            var enOrig = r.classList.toggle('orig');
+            l.textContent = enOrig ? dm(it.ts) + ' · ' + txtO : txtNormal;
+            if (!enOrig) l.appendChild(mk);
+            v.textContent = enOrig ? valO : valN;
+            clearTimeout(tmr);
+            if (enOrig) tmr = setTimeout(function(){ if (r.classList.contains('orig')) montre(); }, 4000);
+          };
+        })(it.origTxt, it.origVal, it.val) : null;
+        glisse(r, peutModif ? 144 : 72, montre);
+      }
+      w.appendChild(r); box.appendChild(w);
+    });
+    var reste = items.length - logShow;
+    if (reste > 0){
+      var bt = document.createElement('button');
+      bt.className = 'more';
+      var fl = document.createElement('span'); fl.textContent = '▾';
+      bt.appendChild(fl);
+      bt.appendChild(document.createTextNode(
+        'Afficher ' + Math.min(20, reste) + ' de plus (' + reste + ' restantes)'));
+      bt.addEventListener('click', function(){ logShow += 20; drawLog(); });
+      box.appendChild(bt);
+    }
+  }
+
+  // ---------- Section enfants ----------
+  // Choix d'affichage, créé une fois puis seulement mis à jour
+  var vueBtn = ['two','0','1'].map(function(v){
+    var bt = document.createElement('button');
+    bt.addEventListener('click', function(){ setVue(v); });
+    $('vueTabs').appendChild(bt);
+    return bt;
+  });
+  $('tkBtn').addEventListener('click', function(){
+    traits = !traits;
+    lset(TKEY, traits ? '1' : '0');
+    appliqueTraits();
+    drawKidsSec();
+  });
+
+  function drawKidsSec(){
+    $('tkBtn').textContent = 'Repères horaires : ' + (traits ? 'oui' : 'non');
+    $('tkBtn').className = 'btn' + (traits ? ' on' : '');
+    var lib = ['Les deux', S.kids[0].name, S.kids[1].name];
+    ['two','0','1'].forEach(function(v, n){
+      if (vueBtn[n].textContent !== lib[n]) vueBtn[n].textContent = lib[n];
+      vueBtn[n].className = (vue === v ? 'sel' : '');
+    });
+    if (document.activeElement !== $('nmIn0')) $('nmIn0').value = S.kids[0].name;
+    if (document.activeElement !== $('nmIn1')) $('nmIn1').value = S.kids[1].name;
+  }
+
+  // Nom et couleur de cet appareil
+  var swBtn = PALETTE.map(function(col){
+    var bt = document.createElement('button');
+    bt.style.background = col;
+    bt.title = col;
+    bt.addEventListener('click', function(){
+      mutate(function(){ S.devices[DEV] = { name:moi().name, color:col, ver:VERSION }; });
+      drawDevSec(); drawLog();
+    });
+    $('devSw').appendChild(bt);
+    return bt;
+  });
+  function drawDevSec(){
+    var m = moi();
+    if (document.activeElement !== $('devName')) $('devName').value = m.name;
+    swBtn.forEach(function(b,i){ b.className = (PALETTE[i] === m.color ? 'sel' : ''); });
+    var box = $('devList'); box.innerHTML = '';
+    var ids = Object.keys(S.devices), retard = [];
+    if (!ids.length){ box.textContent = ''; $('devVer').textContent = ''; return; }
+    ids.forEach(function(id){
+      var d = S.devices[id], v = d.ver || '?';
+      if (v !== VERSION) retard.push(d.name + ' (v' + v + ')');
+      var sp = document.createElement('span');
+      var i2 = document.createElement('i'); i2.style.background = d.color;
+      sp.appendChild(i2);
+      sp.appendChild(document.createTextNode(d.name + ' v' + v + (id === DEV ? ' (celui-ci)' : '')));
+      box.appendChild(sp);
+    });
+    $('devVer').textContent = retard.length
+      ? '⚠ Pas à la même version : ' + retard.join(', ') + '. Un appareil en retard conserve les '
+        + 'réglages récents mais ne les applique pas, et peut consommer du temps qu\'il ignore. '
+        + 'Il se met à jour tout seul à sa prochaine ouverture.'
+      : 'Tous les appareils sont en v' + VERSION + '.';
+  }
+  $('devName').addEventListener('change', function(){
+    var v = $('devName').value.trim() || 'Appareil';
+    $('devName').value = v;
+    mutate(function(){ S.devices[DEV] = { name:v, color:moi().color, ver:VERSION }; });
+    drawDevSec(); drawLog();
+  });
+  [0,1].forEach(function(i){
+    $('nmIn'+i).addEventListener('change', function(){
+      var v = $('nmIn'+i).value.trim() || ('Enfant ' + (i+1));
+      $('nmIn'+i).value = v;
+      mutate(function(){ S.kids[i].name = v; });
+      drawTabs(); drawKidsSec();       // le sélecteur d'affichage porte aussi les prénoms
+    });
+  });
+
+  function refreshParent(){
+    if (!$('parentModal').classList.contains('open')) return;
+    drawKidsSec(); drawDevSec(); drawTabs(); drawQuotas(); drawLog();
+  }
+  function openParent(){
+    pendKid = -1; logKid = -1; resetAdjForm();
+    drawKidsSec(); drawDevSec(); drawTabs(); drawQuotas(); drawLog();
+    $('sUrl').value = sync.url; $('sCode').value = sync.code;
+    $('sNote').textContent = sync.url && sync.code ? 'Synchro configurée.' : 'Laisse vide pour rester en local uniquement.';
+    $('haUrl').value = ha.url; haPaint();
+    $('pinNote').textContent = ''; 
+    open('parentModal');
+  }
+
+  // ---------- Synchro : réglages ----------
+  $('sSave').addEventListener('click', function(){
+    var u = $('sUrl').value.trim();
+    if (u && !/^https?:\/\//i.test(u)){ $('sNote').textContent = 'L\'adresse doit commencer par https://'; return; }
+    applySync(u, $('sCode').value);
+    $('sNote').textContent = endpoint() ? 'Connexion en cours…' : 'Synchro désactivée.';
+  });
+  $('sOff').addEventListener('click', function(){
+    $('sUrl').value=''; $('sCode').value=''; applySync('','');
+    $('sNote').textContent = 'Synchro coupée. L\'app reste utilisable en local.';
+  });
+
+  // ---------- Home Assistant : réglages ----------
+  function haNote(){
+    var n = $('haNote'); if (!n) return;
+    if (!ha.url) n.textContent = 'Colle l\'adresse du webhook HA (en https). Laisse vide pour couper le lien.';
+    else if (!ha.emit) n.textContent = 'Adresse enregistrée, mais cet appareil n\'envoie pas. ' + haLast;
+    else n.textContent = 'Cet appareil prévient Home Assistant. ' + haLast;
+  }
+  function haPaint(){
+    $('haEmit').textContent = 'Cet appareil envoie : ' + (ha.emit ? 'oui' : 'non');
+    $('haEmit').className = 'btn' + (ha.emit ? ' on' : '');
+    haNote();
+  }
+  $('haEmit').addEventListener('click', function(){
+    ha.emit = !ha.emit; lset(HAKEY, JSON.stringify(ha)); haPrev = [null,null]; haPaint();
+  });
+  $('haSave').addEventListener('click', function(){
+    var u = $('haUrl').value.trim();
+    if (u && !/^https:\/\//i.test(u)){ $('haNote').textContent = 'L\'adresse doit être en https, sinon le navigateur bloquera l\'envoi.'; return; }
+    ha.url = u; lset(HAKEY, JSON.stringify(ha)); haPrev = [null,null]; haLast=''; haPaint();
+    $('haNote').textContent = u ? (ha.emit ? 'Enregistré. Cet appareil prévient Home Assistant.'
+                                           : 'Enregistré. Active « cet appareil envoie » sur la tablette du salon.')
+                                : 'Lien Home Assistant coupé.';
+  });
+  $('haTest').addEventListener('click', function(){
+    var u = $('haUrl').value.trim();
+    if (!/^https:\/\//i.test(u)){ $('haNote').textContent = 'Renseigne d\'abord une adresse en https.'; return; }
+    ha.url = u; lset(HAKEY, JSON.stringify(ha));
+    haSend({ evenement:'test', enfant:S.kids[selKid].name, index:selKid, en_cours:'false', niveau:'ok',
+             devoirs_en_cours:'false', depassement:'false', restant_s:0, restant_min:0,
+             global_en_cours:'false', enfants_en_cours:'' });
+    $('haNote').textContent = 'Message de test envoyé. Vérifie le déclencheur dans Home Assistant.';
+  });
+
+  // ---------- Code parent, réinitialisation ----------
+  $('savePin').addEventListener('click', function(){
+    var v = $('newPin').value;
+    if (/^\d{4}$/.test(v)){ mutate(function(){ S.pin = v; }); $('newPin').value=''; $('pinNote').textContent='Code changé.'; }
+    else $('pinNote').textContent='4 chiffres requis.';
+  });
+  // ---------- Réinitialisation (v3.5) ----------
+  // L'état remis à zéro doit gagner sur TOUS les appareils : il porte une date de
+  // réinitialisation (prioritaire dès la v3.5) et une révision très au-dessus de
+  // la plus haute connue (pour les appareils restés en version antérieure).
+  function rType(){ var r = document.querySelector('input[name="rType"]:checked'); return r ? r.value : 'compteurs'; }
+  function paintReset(){
+    document.querySelectorAll('.rchoix label').forEach(function(l){
+      l.classList.toggle('sel', l.querySelector('input').checked); });
+    $('rNote').textContent = (rType() === 'tout' ? 'Tout sera effacé' : 'Les compteurs des deux enfants seront remis à zéro')
+      + (endpoint() ? ', sur tous les appareils synchronisés.' : ' sur cet appareil (synchro inactive).')
+      + ' Action définitive.';
+  }
+  document.querySelectorAll('input[name="rType"]').forEach(function(r){ r.addEventListener('change', paintReset); });
+  $('reset').addEventListener('click', function(){
+    document.querySelector('input[name="rType"][value="compteurs"]').checked = true;
+    paintReset(); $('rYes').disabled = false; $('rYes').textContent = 'Réinitialiser';
+    open('resetModal');
+  });
+  $('rNo').addEventListener('click', function(){ close('resetModal'); });
+  $('rYes').addEventListener('click', function(){
+    var tout = rType() === 'tout';
+    $('rYes').disabled = true; $('rYes').textContent = 'Réinitialisation…';
+    var u = endpoint(), fait = false;
+    function go(revServeur){
+      if (fait) return; fait = true;
+      wakeOff();
+      var base = S, today = new Date(), j = today.getDay();
+      var n = fresh();
+      n.devices = base.devices;
+      if (!tout){
+        n.pin = base.pin; n.twoKids = base.twoKids;
+        n.kids = base.kids.map(function(ok, i){
+          var k = freshKid(ok.name || ('Enfant ' + (i+1)));
+          k.quotas = ok.quotas.slice(); k.factor = ok.factor; k.bloque = ok.bloque.slice();
+          k.dayLeft = k.quotas[j] * MIN; k.tot.dayLeft = k.dayLeft;
+          return k;
+        });
+      }
+      n.kids.forEach(function(k){ k.qj = {}; k.qj[dayKey(today)] = k.quotas[j]; });
+      n.rev = Math.max(base.rev || 1, revServeur || 0) + 1000;
+      n.resetAt = Date.now(); n.updatedAt = n.resetAt; n.by = DEV;
+      S = n; prev = [null,null]; pendKid = -1; logKid = -1; calSel = null;
+      save(); dirty = true; flush();
+      close('resetModal'); close('parentModal'); render();
+    }
+    if (!u){ go(0); return; }
+    // on lit d'abord la révision du serveur pour passer au-dessus
+    fetch(u).then(function(r){ return r.json(); })
+      .then(function(d){ go(d && d.rev); }).catch(function(){ go(0); });
+    setTimeout(function(){ go(0); }, 4000);            // serveur injoignable : on n'attend pas
+  });
+
+  // ---------- Démarrage ----------
+  $('ver').textContent = 'v' + VERSION;
+  paintNet();
+  enregistreAppareil();
+  connect();
+  if (migrated){ S.rev = (S.rev||0)+1; S.updatedAt = Date.now(); S.by = DEV; save(); push(); }
+  if (anyActive()) wakeOn();
+  render();
+  setInterval(render, 250);
+  setTimeout(function(){ verifMaj(false); }, 2500);   // laisse la synchro démarrer d'abord
+})();
+</script>
+</body>
+</html>
