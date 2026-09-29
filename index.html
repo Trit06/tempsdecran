@@ -622,7 +622,7 @@
 
 <script>
 (function(){
-  var VERSION = '3.8';
+  var VERSION = '3.10';
   var KEY  = 'tempsEcran_state';
   var SKEY = 'tempsEcran_sync';
   var DKEY = 'tempsEcran_device';
@@ -1344,15 +1344,33 @@
     play(notes);
   }
   var wl = null;
-  function wakeOn(){ try{ if('wakeLock' in navigator && !wl) navigator.wakeLock.request('screen').then(function(l){ wl=l; l.addEventListener('release',function(){ wl=null; }); }).catch(function(){}); }catch(e){} }
+  var wlDem = false;             // demande en cours : on n'en relance pas une toutes les 250 ms
+  function wakeOn(){ try{ if('wakeLock' in navigator && !wl && !wlDem){ wlDem = true;
+    navigator.wakeLock.request('screen').then(function(l){ wl=l; l.addEventListener('release',function(){ wl=null; }); })
+      .catch(function(){}).then(function(){ wlDem = false; }); } }catch(e){ wlDem = false; } }
   function wakeOff(){ try{ if(wl) wl.release(); }catch(e){} wl=null; }
+  // ---------- Mise en veille (v3.10) ----------
+  // Sans chrono en route, l'app empêche la veille pendant 45 min après la dernière
+  // utilisation, puis lève ce blocage : iOS reprend la main (verrouillage automatique).
+  var VEILLE = 45 * 60000;
+  var activite = Date.now();
+  function bouge(){ activite = Date.now(); }
+  ['pointerdown','keydown','wheel'].forEach(function(t){
+    document.addEventListener(t, bouge, { capture:true, passive:true });
+  });
+  function gardeEveil(){
+    var now = Date.now();
+    if (anyActive()) activite = now;            // un chrono tourne : blocage maintenu
+    if (now - activite < VEILLE) wakeOn(); else wakeOff();
+  }
+
   function anyActive(){          // l'écran ne reste allumé que pour ce que CET appareil montre
     return [0,1].some(function(i){
       return affiche(i) && (S.kids[i].running || S.kids[i].devRun);
     });
   }
   document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible'){ if (anyActive()) wakeOn(); reveil(); }
+    if (document.visibilityState === 'visible'){ activite = Date.now(); gardeEveil(); reveil(); }
   });
 
   // ---------- Rendu ----------
@@ -1463,7 +1481,7 @@
       $('dv'+i).disabled = run;
       $('go'+i).disabled = !!k.devRun;
     }
-    if (anyActive()) wakeOn(); else wakeOff();
+    gardeEveil();
     paintSyn();
     majLog();
   }
@@ -2230,7 +2248,6 @@
   enregistreAppareil();
   connect();
   if (migrated){ S.rev = (S.rev||0)+1; S.updatedAt = Date.now(); S.by = DEV; save(); push(); }
-  if (anyActive()) wakeOn();
   render();
   setInterval(render, 250);
   setTimeout(function(){ verifMaj(false); }, 2500);   // laisse la synchro démarrer d'abord
