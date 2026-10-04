@@ -622,7 +622,7 @@
 
 <script>
 (function(){
-  var VERSION = '3.10';
+  var VERSION = '3.11';
   var KEY  = 'tempsEcran_state';
   var SKEY = 'tempsEcran_sync';
   var DKEY = 'tempsEcran_device';
@@ -818,6 +818,7 @@
 
   function mutate(fn){
     fn();
+    if (endpoint() && !lu) enAttente.push(fn);   // à rejouer sur l'état du serveur s'il est plus récent
     S.rev = (S.rev || 0) + 1; S.updatedAt = Date.now(); S.by = DEV;
     save(); push(); render();
   }
@@ -885,6 +886,34 @@
   // Ce que le serveur contient, d'après le dernier état reçu ou envoyé avec succès.
   // « Synchronisé » = rien en attente, et le serveur a exactement notre révision.
   var srv = { rev:-1, by:'' }, ecartDepuis = 0;
+  // Règle d'or (v3.11) : on n'écrit JAMAIS sur le serveur avant de l'avoir lu depuis la
+  // dernière connexion. Sinon un appareil resté éteint plusieurs jours publiait son état
+  // périmé (et ses jours manqués) par-dessus le vrai, dès son rallumage.
+  var lu = false, connT = 0, enAttente = [];
+  function rolloverPermis(){       // hors ligne depuis 5 s : on fait quand même passer les jours
+    return !endpoint() || lu || Date.now() - connT > 5000;
+  }
+  // Première lecture après (re)connexion : le serveur est la référence.
+  function premiereLecture(d){
+    lu = true;
+    var acts = enAttente; enAttente = [];
+    if (d === null){ dirty = true; flush(); return; }          // serveur vide : on l'initialise
+    noteServeur(d);
+    migrated = false;
+    var dn = normalize(d);
+    if (dn && plusRecent(dn, S)){
+      // Le serveur est plus récent : on le prend tel quel, même si on avait des changements
+      // locaux (ils viennent d'un état périmé), puis on rejoue les actions faites entre-temps.
+      S = dn; prev = [null,null]; pendKid = -1;
+      enregistreAppareil();
+      save(); dirty = false;
+      acts.forEach(function(fn){ mutate(fn); });
+      render(); refreshParent();
+      if (versionAnnoncee()) verifMaj(false, true);
+    } else {
+      dirty = true; flush();                                   // le nôtre est plus récent (actions hors ligne)
+    }
+  }
   function noteServeur(d){ if (d){ srv.rev = d.rev || 0; srv.by = d.by || ''; } }
 
   function endpoint(){
@@ -934,6 +963,7 @@
   function connect(){
     if (es){ try{ es.close(); }catch(e){} es = null; }
     var u = endpoint();
+    lu = false; connT = Date.now();
     if (!u){ setNet('off'); return; }
     setNet('wait');
     try{
@@ -948,6 +978,7 @@
         vuLe = Date.now(); setNet('live');
         var m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
         if (m.path !== '/'){ pull(); return; }
+        if (!lu){ premiereLecture(m.data); return; }
         if (m.data === null){ srv.rev = -1; dirty = true; flush(); return; }
         noteServeur(m.data);
         if (!dirty && !pushing) adopt(m.data);
@@ -959,6 +990,7 @@
   function pull(){
     var u = endpoint(); if (!u) return;
     fetch(u).then(function(r){ return r.json(); }).then(function(d){
+      if (!lu){ premiereLecture(d); return; }
       noteServeur(d);
       if (d && !dirty && !pushing) adopt(d);
     }).catch(function(){ setNet('down'); });
@@ -966,7 +998,7 @@
   function push(){ if (endpoint()){ dirty = true; flush(); } }
   function flush(){
     var u = endpoint();
-    if (!u || pushing || !dirty) return;
+    if (!u || pushing || !dirty || !lu) return;
     pushing = true;
     var snap = JSON.stringify(S);
     // sans délai maximal, une requête figée par la mise en veille d'iOS laissait
@@ -1108,6 +1140,7 @@
   }
 
   function rollover(){
+    if (!rolloverPermis()) return;
     var today = dayKey(new Date()), now = Date.now(), changed = false, cut = now - KEEP;
     S.kids.forEach(function(k){
       if (k.lastDay >= today) return;
